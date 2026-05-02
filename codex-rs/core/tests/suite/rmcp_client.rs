@@ -741,10 +741,7 @@ async fn stdio_server_non_exact_freeform_like_custom_call_falls_back_to_plain_cu
         .custom_tool_call_output_content_and_success(call_id)
         .expect("custom tool fallback output should be present");
     let expected_output = format!("unsupported custom tool call: {tool_name}");
-    assert_eq!(
-        output_text.as_deref(),
-        Some(expected_output.as_str())
-    );
+    assert_eq!(output_text.as_deref(), Some(expected_output.as_str()));
     assert_eq!(success, None);
 
     let request = call_mock.single_request();

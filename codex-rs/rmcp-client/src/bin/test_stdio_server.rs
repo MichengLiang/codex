@@ -174,7 +174,9 @@ impl TestToolServer {
 
         let mut tool = Tool::new(
             Cow::Borrowed("near_miss_freeform"),
-            Cow::Borrowed("Looks similar to a freeform tool, but keeps an extra structured argument."),
+            Cow::Borrowed(
+                "Looks similar to a freeform tool, but keeps an extra structured argument.",
+            ),
             Arc::new(schema),
         );
         tool.annotations = Some(ToolAnnotations::new().read_only(true));

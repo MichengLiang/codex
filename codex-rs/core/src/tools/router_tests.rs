@@ -86,18 +86,19 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
             dynamic_tools: turn.dynamic_tools.as_slice(),
         },
     );
-    let call = router.build_tool_call(
-        &session,
-        ResponseItem::FunctionCall {
-            id: None,
-            name: tool_name.clone(),
-            namespace: Some("mcp__codex_apps__calendar".to_string()),
-            arguments: "{}".to_string(),
-            call_id: "call-namespace".to_string(),
-        },
-    )
-    .await?
-    .expect("function_call should produce a tool call");
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: tool_name.clone(),
+                namespace: Some("mcp__codex_apps__calendar".to_string()),
+                arguments: "{}".to_string(),
+                call_id: "call-namespace".to_string(),
+            },
+        )
+        .await?
+        .expect("function_call should produce a tool call");
 
     assert_eq!(
         call.tool_name,
@@ -218,7 +219,8 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
 }
 
 #[tokio::test]
-async fn custom_tool_call_does_not_route_to_deferred_exact_mcp_freeform_tool() -> anyhow::Result<()> {
+async fn custom_tool_call_does_not_route_to_deferred_exact_mcp_freeform_tool() -> anyhow::Result<()>
+{
     let (session, turn) = make_session_and_context().await;
     let session = Arc::new(session);
     let deferred_freeform_tool_name = "mcp__rmcp__freeform_echo".to_string();

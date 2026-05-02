@@ -83,7 +83,8 @@ impl ToolRouter {
         let direct_mcp_freeform_tools_by_custom_name = mcp_tools
             .as_ref()
             .map(|tools| {
-                tools.values()
+                tools
+                    .values()
                     .filter(|tool| {
                         tool.mcp_freeform
                             && is_exact_freeform_input_schema(&tool.tool)
