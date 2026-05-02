@@ -67,6 +67,24 @@ git rebase --continue
 - 较大的功能可以从 `custom/micheng` 再开临时分支，完成后合回 `custom/micheng`。
 - 推送 rebase 后的个人分支时使用 `--force-with-lease`，不要使用裸 `--force`。
 
+## 临时分支命名与远端跟踪
+
+个人临时分支使用 `custom/<topic>` 命名，并推送到 `origin`：
+
+```bash
+git switch -c custom/mcp-text-contract
+git push -u origin custom/mcp-text-contract
+```
+
+如果本地 `origin` 的 fetch refspec 仅包含 `main` 与 `custom/*`，则不会维护 `origin/feature/*` 的远端跟踪分支（remote-tracking branch）。
+在该配置下，即使远端已存在 `feature/*` 分支，本地也无法基于 `origin/feature/*` 展示上游跟踪信息（例如 `git status -sb` 的 `...origin/<branch>`，以及 `@{u}` 解析）。
+需要跟踪 `feature/*` 时，扩展 `remote.origin.fetch` 并重新 fetch：
+
+```bash
+git config --add remote.origin.fetch '+refs/heads/feature/*:refs/remotes/origin/feature/*'
+git fetch origin --prune
+```
+
 ## 当前基线
 
 整理完成时，`main` 和 `custom/micheng` 都指向同一个官方提交：
