@@ -38,6 +38,10 @@ pub struct ToolInfo {
     /// Instructions from the MCP server initialize result.
     #[serde(default)]
     pub server_instructions: Option<String>,
+    #[serde(default)]
+    pub model_content_only: bool,
+    #[serde(default)]
+    pub mcp_freeform: bool,
     /// Raw MCP tool definition; `tool.name` is sent back to the MCP server.
     pub tool: Tool,
     pub connector_id: Option<String>,

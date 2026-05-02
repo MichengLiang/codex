@@ -41,6 +41,8 @@ fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
         server_instructions: None,
+        model_content_only: false,
+        mcp_freeform: false,
         tool: Tool {
             name: tool_name.to_string().into(),
             title: None,
@@ -661,6 +663,8 @@ async fn list_all_tools_uses_startup_snapshot_while_client_is_pending() {
             startup_snapshot: Some(startup_tools),
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            model_content_only: false,
+            mcp_freeform: false,
             cancel_token: CancellationToken::new(),
         },
     );
@@ -690,6 +694,8 @@ async fn resolve_tool_info_accepts_canonical_namespaced_tool_names() {
             startup_snapshot: Some(startup_tools),
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            model_content_only: false,
+            mcp_freeform: false,
             cancel_token: CancellationToken::new(),
         },
     );
@@ -727,6 +733,8 @@ async fn list_all_tools_blocks_while_client_is_pending_without_startup_snapshot(
             startup_snapshot: None,
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            model_content_only: false,
+            mcp_freeform: false,
             cancel_token: CancellationToken::new(),
         },
     );
@@ -752,6 +760,8 @@ async fn list_all_tools_does_not_block_when_startup_snapshot_cache_hit_is_empty(
             startup_snapshot: Some(Vec::new()),
             startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            model_content_only: false,
+            mcp_freeform: false,
             cancel_token: CancellationToken::new(),
         },
     );
@@ -787,6 +797,8 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
             startup_snapshot: Some(startup_tools),
             startup_complete,
             tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
+            model_content_only: false,
+            mcp_freeform: false,
             cancel_token: CancellationToken::new(),
         },
     );

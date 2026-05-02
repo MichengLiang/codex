@@ -61,6 +61,8 @@ use crate::create_web_search_tool;
 use crate::create_write_stdin_tool;
 use crate::default_namespace_description;
 use crate::dynamic_tool_to_loadable_tool_spec;
+use crate::is_exact_freeform_input_schema;
+use crate::mcp_tool_to_freeform_tool;
 use crate::mcp_tool_to_responses_api_tool;
 use crate::request_permissions_tool_description;
 use crate::request_user_input_tool_description;
@@ -546,6 +548,26 @@ pub fn build_tool_registry_plan(
                 });
             let mut tools = Vec::new();
             for tool in entries {
+                if tool.mcp_freeform && is_exact_freeform_input_schema(tool.tool) {
+                    match mcp_tool_to_freeform_tool(&tool.name, tool.tool) {
+                        Ok(converted_tool) => {
+                            plan.push_spec(
+                                ToolSpec::Freeform(converted_tool),
+                                /*supports_parallel_tool_calls*/ false,
+                                config.code_mode_enabled,
+                            );
+                            plan.register_handler(tool.name, ToolHandlerKind::Mcp);
+                        }
+                        Err(error) => {
+                            let tool_name = &tool.name;
+                            tracing::error!(
+                                "Failed to convert `{tool_name}` MCP freeform tool to OpenAI tool: {error:?}"
+                            );
+                        }
+                    }
+                    continue;
+                }
+
                 match mcp_tool_to_responses_api_tool(&tool.name, tool.tool) {
                     Ok(converted_tool) => {
                         tools.push(ResponsesApiNamespaceTool::Function(converted_tool));

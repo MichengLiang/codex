@@ -65,6 +65,8 @@ fn mcp_code_mode_result_serializes_full_call_tool_result() {
         server: "server".to_string(),
         tool: "tool".to_string(),
         raw_arguments: "{}".to_string(),
+        model_content_only: false,
+        is_freeform: false,
     });
 
     assert_eq!(
@@ -110,6 +112,8 @@ fn mcp_tool_output_response_item_includes_wall_time() {
             server: "server".to_string(),
             tool: "tool".to_string(),
             raw_arguments: "{}".to_string(),
+            model_content_only: false,
+            is_freeform: false,
         },
     );
 
@@ -133,6 +137,132 @@ fn mcp_tool_output_response_item_includes_wall_time() {
                     "text": "done",
                 }])
             );
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn mcp_tool_output_content_only_response_item_projects_first_text_without_wrapper() {
+    let output = McpToolOutput {
+        result: CallToolResult {
+            content: vec![serde_json::json!({
+                "type": "text",
+                "text": "abc",
+            })],
+            structured_content: Some(serde_json::json!({
+                "x": 1
+            })),
+            is_error: Some(false),
+            meta: Some(serde_json::json!({
+                "trace": "keep host-side only"
+            })),
+        },
+        tool_input: json!({}),
+        wall_time: std::time::Duration::from_millis(1250),
+        original_image_detail_supported: false,
+        truncation_policy: TruncationPolicy::Bytes(1024),
+    };
+
+    let response = output.to_response_item(
+        "mcp-call-content-only",
+        &ToolPayload::Mcp {
+            server: "server".to_string(),
+            tool: "tool".to_string(),
+            raw_arguments: "{}".to_string(),
+            model_content_only: true,
+            is_freeform: false,
+        },
+    );
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { call_id, output } => {
+            assert_eq!(call_id, "mcp-call-content-only");
+            assert_eq!(output.success, Some(true));
+            assert_eq!(output.body.to_text().as_deref(), Some("abc"));
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn mcp_tool_output_freeform_response_item_uses_custom_tool_output() {
+    let output = McpToolOutput {
+        result: CallToolResult {
+            content: vec![serde_json::json!({
+                "type": "text",
+                "text": "freeform result",
+            })],
+            structured_content: Some(serde_json::json!({
+                "x": 1
+            })),
+            is_error: Some(false),
+            meta: None,
+        },
+        tool_input: json!({}),
+        wall_time: std::time::Duration::from_millis(100),
+        original_image_detail_supported: false,
+        truncation_policy: TruncationPolicy::Bytes(1024),
+    };
+
+    let response = output.to_response_item(
+        "mcp-call-freeform",
+        &ToolPayload::Mcp {
+            server: "server".to_string(),
+            tool: "tool".to_string(),
+            raw_arguments: "{\"freeform\":\"value\"}".to_string(),
+            model_content_only: true,
+            is_freeform: true,
+        },
+    );
+
+    match response {
+        ResponseInputItem::CustomToolCallOutput {
+            call_id, output, ..
+        } => {
+            assert_eq!(call_id, "mcp-call-freeform");
+            assert_eq!(output.body.to_text().as_deref(), Some("freeform result"));
+            assert_eq!(output.success, Some(true));
+        }
+        other => panic!("expected CustomToolCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn mcp_tool_output_content_only_preserves_empty_text() {
+    let output = McpToolOutput {
+        result: CallToolResult {
+            content: vec![serde_json::json!({
+                "type": "text",
+                "text": "",
+            })],
+            structured_content: Some(serde_json::json!({
+                "x": 1
+            })),
+            is_error: Some(true),
+            meta: None,
+        },
+        tool_input: json!({}),
+        wall_time: std::time::Duration::from_millis(1250),
+        original_image_detail_supported: false,
+        truncation_policy: TruncationPolicy::Bytes(1024),
+    };
+
+    let response = output.to_response_item(
+        "mcp-call-empty-content-only",
+        &ToolPayload::Mcp {
+            server: "server".to_string(),
+            tool: "tool".to_string(),
+            raw_arguments: "{}".to_string(),
+            model_content_only: true,
+            is_freeform: false,
+        },
+    );
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { output, .. } => {
+            assert_eq!(output.body.to_text().as_deref(), Some(""));
+            assert_eq!(output.success, Some(false));
         }
         other => panic!("expected FunctionCallOutput, got {other:?}"),
     }
@@ -164,6 +294,8 @@ fn mcp_tool_output_response_item_truncates_large_structured_content() {
             server: "server".to_string(),
             tool: "tool".to_string(),
             raw_arguments: "{}".to_string(),
+            model_content_only: false,
+            is_freeform: false,
         },
     );
 
@@ -209,6 +341,8 @@ fn mcp_tool_output_response_item_preserves_content_items() {
             server: "server".to_string(),
             tool: "tool".to_string(),
             raw_arguments: "{}".to_string(),
+            model_content_only: false,
+            is_freeform: false,
         },
     );
 
@@ -263,6 +397,8 @@ fn mcp_tool_output_code_mode_result_stays_raw_call_tool_result() {
         server: "server".to_string(),
         tool: "tool".to_string(),
         raw_arguments: "{}".to_string(),
+        model_content_only: false,
+        is_freeform: false,
     });
 
     assert_eq!(

@@ -74,6 +74,8 @@ pub enum ToolPayload {
         server: String,
         tool: String,
         raw_arguments: String,
+        model_content_only: bool,
+        is_freeform: bool,
     },
 }
 
@@ -148,7 +150,13 @@ pub struct McpToolOutput {
 
 impl ToolOutput for McpToolOutput {
     fn log_preview(&self) -> String {
-        let payload = self.response_payload();
+        let payload = self.response_payload(&ToolPayload::Mcp {
+            server: String::new(),
+            tool: String::new(),
+            raw_arguments: String::new(),
+            model_content_only: false,
+            is_freeform: false,
+        });
         let preview = payload.body.to_text().unwrap_or_else(|| {
             serde_json::to_string(&self.result.content)
                 .unwrap_or_else(|err| format!("failed to serialize mcp result: {err}"))
@@ -160,10 +168,20 @@ impl ToolOutput for McpToolOutput {
         self.result.success()
     }
 
-    fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
-        ResponseInputItem::FunctionCallOutput {
-            call_id: call_id.to_string(),
-            output: self.response_payload(),
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        let output = self.response_payload(payload);
+        match payload {
+            ToolPayload::Mcp {
+                is_freeform: true, ..
+            } => ResponseInputItem::CustomToolCallOutput {
+                call_id: call_id.to_string(),
+                name: None,
+                output,
+            },
+            _ => ResponseInputItem::FunctionCallOutput {
+                call_id: call_id.to_string(),
+                output,
+            },
         }
     }
 
@@ -179,7 +197,29 @@ impl ToolOutput for McpToolOutput {
 }
 
 impl McpToolOutput {
-    fn response_payload(&self) -> FunctionCallOutputPayload {
+    fn response_payload(&self, payload: &ToolPayload) -> FunctionCallOutputPayload {
+        if let ToolPayload::Mcp {
+            model_content_only: true,
+            ..
+        } = payload
+        {
+            let text = self
+                .result
+                .content
+                .first()
+                .and_then(serde_json::Value::as_object)
+                .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .and_then(|item| item.get("text"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            return truncate_function_output_payload(
+                &FunctionCallOutputPayload::from_text(text)
+                    .with_success(Some(self.result.success())),
+                self.truncation_policy * 1.2,
+            );
+        }
+
         let mut payload = self.result.as_function_call_output_payload();
         if let Some(items) = payload.content_items_mut() {
             sanitize_original_image_detail(self.original_image_detail_supported, items);
@@ -519,6 +559,8 @@ pub(crate) fn response_input_to_code_mode_result(response: ResponseInputItem) ->
                 server: String::new(),
                 tool: String::new(),
                 raw_arguments: String::new(),
+                model_content_only: false,
+                is_freeform: false,
             })
         }
     }
@@ -559,6 +601,20 @@ fn function_tool_response(
     };
 
     if matches!(payload, ToolPayload::Custom { .. }) {
+        return ResponseInputItem::CustomToolCallOutput {
+            call_id: call_id.to_string(),
+            name: None,
+            output: FunctionCallOutputPayload { body, success },
+        };
+    }
+
+    if matches!(
+        payload,
+        ToolPayload::Mcp {
+            is_freeform: true,
+            ..
+        }
+    ) {
         return ResponseInputItem::CustomToolCallOutput {
             call_id: call_id.to_string(),
             name: None,

@@ -274,6 +274,8 @@ struct TestMcpServerOptions {
     experimental_environment: Option<String>,
     supports_parallel_tool_calls: bool,
     tool_timeout_sec: Option<Duration>,
+    model_content_only: bool,
+    mcp_freeform: bool,
 }
 
 fn stdio_transport(
@@ -314,6 +316,8 @@ fn insert_mcp_server(
             enabled: true,
             required: false,
             supports_parallel_tool_calls: options.supports_parallel_tool_calls,
+            model_content_only: options.model_content_only,
+            mcp_freeform: options.mcp_freeform,
             disabled_reason: None,
             startup_timeout_sec: Some(Duration::from_secs(10)),
             tool_timeout_sec: options.tool_timeout_sec,
@@ -544,6 +548,132 @@ async fn stdio_server_round_trip() -> anyhow::Result<()> {
 
     server.verify().await;
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[serial(mcp_test_value)]
+async fn stdio_server_freeform_round_trip_uses_custom_tool_and_content_only_output()
+-> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+
+    let call_id = "call-freeform-123";
+    let server_name = "rmcp_freeform";
+    let tool_name = format!("mcp__{server_name}__freeform_echo");
+
+    let call_mock = mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_custom_tool_call(call_id, &tool_name, "hello raw input"),
+            responses::ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+    let final_mock = mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_assistant_message("msg-1", "rmcp freeform tool completed successfully."),
+            responses::ev_completed("resp-2"),
+        ]),
+    )
+    .await;
+
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
+    let fixture = test_codex()
+        .with_config(move |config| {
+            insert_mcp_server(
+                config,
+                server_name,
+                stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
+                TestMcpServerOptions {
+                    experimental_environment: remote_aware_experimental_environment(),
+                    model_content_only: true,
+                    mcp_freeform: true,
+                    ..Default::default()
+                },
+            );
+        })
+        .build_remote_aware(&server)
+        .await?;
+    fixture
+        .codex
+        .submit(read_only_user_turn(&fixture, "call the rmcp freeform tool"))
+        .await?;
+
+    let begin_event = wait_for_event(&fixture.codex, |ev| {
+        matches!(ev, EventMsg::McpToolCallBegin(_))
+    })
+    .await;
+    let EventMsg::McpToolCallBegin(begin) = begin_event else {
+        unreachable!("event guard guarantees McpToolCallBegin");
+    };
+    assert_eq!(begin.invocation.server, server_name);
+    assert_eq!(begin.invocation.tool, "freeform_echo");
+    assert_eq!(
+        begin.invocation.arguments,
+        Some(json!({ "freeform": "hello raw input" }))
+    );
+
+    let end_event = wait_for_event(&fixture.codex, |ev| {
+        matches!(ev, EventMsg::McpToolCallEnd(_))
+    })
+    .await;
+    let EventMsg::McpToolCallEnd(end) = end_event else {
+        unreachable!("event guard guarantees McpToolCallEnd");
+    };
+    let result = end
+        .result
+        .as_ref()
+        .expect("rmcp freeform tool should return success");
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(
+        result.content,
+        vec![json!({
+            "type": "text",
+            "text": "FREEFORM: hello raw input",
+        })]
+    );
+    assert_eq!(
+        result.structured_content.as_ref(),
+        Some(&json!({ "freeform": "hello raw input" }))
+    );
+
+    wait_for_event(&fixture.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = call_mock.single_request();
+    let body = request.body_json();
+    let tools = body["tools"]
+        .as_array()
+        .expect("responses request should include tools array");
+    let freeform_tool = tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name.as_str()))
+        .unwrap_or_else(|| panic!("freeform MCP tool missing from request: {body:?}"));
+    assert_eq!(freeform_tool["type"], "custom");
+
+    let output_item = final_mock.single_request().custom_tool_call_output(call_id);
+    assert_eq!(output_item["type"], "custom_tool_call_output");
+    assert_eq!(output_item["call_id"], call_id);
+    let (output_text, success) = final_mock
+        .single_request()
+        .custom_tool_call_output_content_and_success(call_id)
+        .expect("custom tool output should be present");
+    assert_eq!(output_text.as_deref(), Some("FREEFORM: hello raw input"));
+    assert_eq!(success, None);
+    let output_text = output_text.expect("freeform output text");
+    assert!(!output_text.contains("Wall time:"));
+    assert!(!output_text.contains("Output:"));
+
+    let final_body = final_mock.single_request().body_json().to_string();
+    assert!(
+        !final_body.contains("structuredContent"),
+        "content-only output should not serialize structured content into model input: {final_body}"
+    );
+
+    server.verify().await;
     Ok(())
 }
 
@@ -999,6 +1129,8 @@ async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently() -> anyhow::Res
                     experimental_environment: remote_aware_experimental_environment(),
                     supports_parallel_tool_calls: true,
                     tool_timeout_sec: Some(Duration::from_secs(2)),
+                    model_content_only: false,
+                    mcp_freeform: false,
                 },
             );
         })

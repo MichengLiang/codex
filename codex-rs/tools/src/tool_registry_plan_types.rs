@@ -78,6 +78,7 @@ pub struct ToolNamespace {
 pub struct ToolRegistryPlanMcpTool<'a> {
     pub name: ToolName,
     pub tool: &'a rmcp::model::Tool,
+    pub mcp_freeform: bool,
 }
 
 #[derive(Debug, Clone)]

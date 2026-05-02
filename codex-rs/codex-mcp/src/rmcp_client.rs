@@ -124,6 +124,8 @@ pub(crate) struct AsyncManagedClient {
     pub(crate) startup_snapshot: Option<Vec<ToolInfo>>,
     pub(crate) startup_complete: Arc<AtomicBool>,
     pub(crate) tool_plugin_provenance: Arc<ToolPluginProvenance>,
+    pub(crate) model_content_only: bool,
+    pub(crate) mcp_freeform: bool,
     pub(crate) cancel_token: CancellationToken,
 }
 
@@ -153,6 +155,8 @@ impl AsyncManagedClient {
         let startup_complete = Arc::new(AtomicBool::new(false));
         let startup_complete_for_fut = Arc::clone(&startup_complete);
         let cancel_token_for_fut = cancel_token.clone();
+        let model_content_only = config.model_content_only;
+        let mcp_freeform = config.mcp_freeform;
         let fut = async move {
             let outcome = match async {
                 if let Err(error) = validate_mcp_server_name(&server_name) {
@@ -208,6 +212,8 @@ impl AsyncManagedClient {
             startup_snapshot,
             startup_complete,
             tool_plugin_provenance,
+            model_content_only,
+            mcp_freeform,
             cancel_token,
         }
     }
@@ -238,6 +244,8 @@ impl AsyncManagedClient {
         let annotate_tools = |tools: Vec<ToolInfo>| {
             let mut tools = tools;
             for tool in &mut tools {
+                tool.model_content_only = self.model_content_only;
+                tool.mcp_freeform = self.mcp_freeform;
                 if tool.server_name == CODEX_APPS_MCP_SERVER_NAME {
                     tool.tool = tool_with_model_visible_input_schema(&tool.tool);
                 }
@@ -367,6 +375,8 @@ pub(crate) async fn list_tools_for_client_uncached(
                 callable_name,
                 callable_namespace,
                 server_instructions: server_instructions.map(str::to_string),
+                model_content_only: false,
+                mcp_freeform: false,
                 tool: tool_def,
                 connector_id,
                 connector_name,

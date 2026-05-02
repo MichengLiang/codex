@@ -2226,6 +2226,7 @@ fn build_specs_with_optional_tool_namespaces<'a>(
             .map(|(name, tool)| ToolRegistryPlanMcpTool {
                 name: name.clone(),
                 tool,
+                mcp_freeform: false,
             })
             .collect::<Vec<_>>()
     });
@@ -2236,6 +2237,26 @@ fn build_specs_with_optional_tool_namespaces<'a>(
             deferred_mcp_tools: deferred_mcp_tools.as_deref(),
             tool_namespaces: tool_namespaces.as_ref(),
             discoverable_tools: discoverable_tools.as_deref(),
+            dynamic_tools,
+            default_agent_type_description: DEFAULT_AGENT_TYPE_DESCRIPTION,
+            wait_agent_timeouts: wait_agent_timeout_options(),
+        },
+    );
+    (plan.specs, plan.handlers)
+}
+
+fn build_specs_with_mcp_freeform_flags<'a>(
+    config: &ToolsConfig,
+    mcp_tools: Vec<ToolRegistryPlanMcpTool<'a>>,
+    dynamic_tools: &[DynamicToolSpec],
+) -> (Vec<ConfiguredToolSpec>, Vec<ToolHandlerSpec>) {
+    let plan = build_tool_registry_plan(
+        config,
+        ToolRegistryPlanParams {
+            mcp_tools: Some(mcp_tools.as_slice()),
+            deferred_mcp_tools: None,
+            tool_namespaces: None,
+            discoverable_tools: None,
             dynamic_tools,
             default_agent_type_description: DEFAULT_AGENT_TYPE_DESCRIPTION,
             wait_agent_timeouts: wait_agent_timeout_options(),
@@ -2327,6 +2348,143 @@ exec tool declaration:
 ```ts
 declare const tools: { mcp__sample__echo(args: { message: string; }): Promise<CallToolResult<{ echo: string; env: string | null; }>>; };
 ```"#
+    );
+}
+
+#[test]
+fn direct_mcp_freeform_tool_is_exposed_as_top_level_freeform_tool_when_opted_in() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let freeform_tool = mcp_tool(
+        "apply_patch",
+        "Apply a patch",
+        json!({
+            "type": "object",
+            "properties": {
+                "freeform": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }),
+    );
+    let echo_tool = mcp_tool(
+        "echo",
+        "Echo text",
+        json!({
+            "type": "object",
+            "properties": {
+                "message": { "type": "string" }
+            },
+            "required": ["message"],
+            "additionalProperties": false
+        }),
+    );
+    let (tools, handlers) = build_specs_with_mcp_freeform_flags(
+        &config,
+        vec![
+            ToolRegistryPlanMcpTool {
+                name: ToolName::namespaced("mcp__sample__", "apply_patch"),
+                tool: &freeform_tool,
+                mcp_freeform: true,
+            },
+            ToolRegistryPlanMcpTool {
+                name: ToolName::namespaced("mcp__sample__", "echo"),
+                tool: &echo_tool,
+                mcp_freeform: true,
+            },
+        ],
+        &[],
+    );
+
+    let freeform_tool = find_tool(&tools, "mcp__sample__apply_patch");
+    let ToolSpec::Freeform(FreeformTool {
+        name, description, ..
+    }) = &freeform_tool.spec
+    else {
+        panic!("expected top-level freeform tool");
+    };
+    assert_eq!(name, "mcp__sample__apply_patch");
+    assert_eq!(description, "Apply a patch");
+
+    let echo_tool = find_namespace_function_tool(&tools, "mcp__sample__", "echo");
+    assert_eq!(echo_tool.name, "echo");
+
+    assert!(
+        handlers.iter().any(|handler| {
+            handler.name == ToolName::namespaced("mcp__sample__", "apply_patch")
+                && handler.kind == ToolHandlerKind::Mcp
+        }),
+        "expected MCP handler for canonical namespaced tool"
+    );
+}
+
+#[test]
+fn non_exact_mcp_freeform_schema_stays_namespaced_function_tool() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let rewrite_tool = mcp_tool(
+        "rewrite",
+        "Rewrite text",
+        json!({
+            "type": "object",
+            "properties": {
+                "freeform": { "type": "string" },
+                "mode": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }),
+    );
+    let (tools, _) = build_specs_with_mcp_freeform_flags(
+        &config,
+        vec![ToolRegistryPlanMcpTool {
+            name: ToolName::namespaced("mcp__sample__", "rewrite"),
+            tool: &rewrite_tool,
+            mcp_freeform: true,
+        }],
+        &[],
+    );
+
+    let namespace_tool = find_tool(&tools, "mcp__sample__");
+    let ToolSpec::Namespace(namespace) = &namespace_tool.spec else {
+        panic!("expected namespace tool");
+    };
+    assert!(namespace.tools.iter().any(|tool| {
+        matches!(
+            tool,
+            ResponsesApiNamespaceTool::Function(ResponsesApiTool { name, .. })
+                if name == "rewrite"
+        )
+    }));
+    assert!(
+        tools
+            .iter()
+            .all(|tool| tool.name() != "mcp__sample__rewrite"),
+        "non-exact schema must not become a top-level freeform tool"
     );
 }
 

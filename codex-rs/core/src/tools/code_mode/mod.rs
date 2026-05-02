@@ -336,6 +336,8 @@ async fn call_nested_tool(
                     server: tool_info.server_name,
                     tool: tool_info.tool.name.to_string(),
                     raw_arguments,
+                    model_content_only: tool_info.model_content_only,
+                    is_freeform: false,
                 },
             )
         } else {

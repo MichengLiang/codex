@@ -428,6 +428,8 @@ fn codex_apps_mcp_server_config(config: &McpConfig) -> McpServerConfig {
         enabled: true,
         required: false,
         supports_parallel_tool_calls: false,
+        model_content_only: false,
+        mcp_freeform: false,
         disabled_reason: None,
         startup_timeout_sec: Some(Duration::from_secs(30)),
         tool_timeout_sec: None,

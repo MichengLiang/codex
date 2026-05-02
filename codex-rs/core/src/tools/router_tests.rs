@@ -121,6 +121,8 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
             server: "echo".to_string(),
             tool: "query_with_delay".to_string(),
             raw_arguments: "{}".to_string(),
+            model_content_only: false,
+            is_freeform: false,
         },
     };
     assert!(router.tool_supports_parallel(&deferred_call));
@@ -132,6 +134,8 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
             server: "hello_echo".to_string(),
             tool: "query_with_delay".to_string(),
             raw_arguments: "{}".to_string(),
+            model_content_only: false,
+            is_freeform: false,
         },
     };
     assert!(!router.tool_supports_parallel(&different_server_call));

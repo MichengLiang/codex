@@ -1412,6 +1412,11 @@ impl FunctionCallOutputPayload {
         }
     }
 
+    pub fn with_success(mut self, success: Option<bool>) -> Self {
+        self.success = success;
+        self
+    }
+
     pub fn from_content_items(content_items: Vec<FunctionCallOutputContentItem>) -> Self {
         Self {
             body: FunctionCallOutputBody::ContentItems(content_items),

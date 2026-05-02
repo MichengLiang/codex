@@ -161,6 +161,16 @@ impl ToolCallRuntime {
                     success: Some(false),
                 },
             },
+            ToolPayload::Mcp {
+                is_freeform: true, ..
+            } => ResponseInputItem::CustomToolCallOutput {
+                call_id: call.call_id,
+                name: None,
+                output: codex_protocol::models::FunctionCallOutputPayload {
+                    body: codex_protocol::models::FunctionCallOutputBody::Text(message),
+                    success: Some(false),
+                },
+            },
             _ => ResponseInputItem::FunctionCallOutput {
                 call_id: call.call_id,
                 output: codex_protocol::models::FunctionCallOutputPayload {

@@ -620,6 +620,16 @@ impl McpConnectionManager {
             .find(|tool| tool.canonical_tool_name() == *tool_name)
     }
 
+    pub async fn resolve_mcp_freeform_tool_info_by_custom_name(
+        &self,
+        custom_name: &str,
+    ) -> Option<ToolInfo> {
+        let all_tools = self.list_all_tools().await;
+        all_tools
+            .into_values()
+            .find(|tool| tool.mcp_freeform && tool.canonical_tool_name().display() == custom_name)
+    }
+
     async fn client_by_name(&self, name: &str) -> Result<ManagedClient> {
         self.clients
             .get(name)

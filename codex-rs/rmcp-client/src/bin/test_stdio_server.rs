@@ -68,6 +68,7 @@ impl TestToolServer {
         let tools = vec![
             Self::echo_tool(),
             Self::echo_dash_tool(),
+            Self::freeform_echo_tool(),
             Self::cwd_tool(),
             Self::sync_tool(),
             Self::image_tool(),
@@ -132,6 +133,27 @@ impl TestToolServer {
         }))
         .expect("echo tool output schema should deserialize");
         tool.output_schema = Some(Arc::new(output_schema));
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn freeform_echo_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "freeform": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }))
+        .expect("freeform echo tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("freeform_echo"),
+            Cow::Borrowed("Echo back raw freeform input in text and structured channels."),
+            Arc::new(schema),
+        );
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
         tool
     }
@@ -323,6 +345,11 @@ impl TestToolServer {
 struct EchoArgs {
     message: String,
     env_var: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FreeformEchoArgs {
+    freeform: String,
 }
 
 const DEFAULT_SYNC_TIMEOUT_MS: u64 = 1_000;
@@ -517,6 +544,18 @@ impl ServerHandler for TestToolServer {
                 Ok(CallToolResult {
                     content: Vec::new(),
                     structured_content: Some(structured_content),
+                    is_error: Some(false),
+                    meta: None,
+                })
+            }
+            "freeform_echo" => {
+                let args = Self::parse_call_args::<FreeformEchoArgs>(&request, "freeform_echo")?;
+                Ok(CallToolResult {
+                    content: vec![rmcp::model::Content::text(format!(
+                        "FREEFORM: {}",
+                        args.freeform
+                    ))],
+                    structured_content: Some(json!({ "freeform": args.freeform })),
                     is_error: Some(false),
                     meta: None,
                 })

@@ -68,6 +68,7 @@ impl ToolHandler for McpHandler {
                 server,
                 tool,
                 raw_arguments,
+                ..
             } => (server, tool, raw_arguments),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
@@ -132,6 +133,8 @@ mod tests {
                 }]
             })
             .to_string(),
+            model_content_only: false,
+            is_freeform: false,
         };
         let (session, turn) = make_session_and_context().await;
 
@@ -164,6 +167,8 @@ mod tests {
             server: "filesystem".to_string(),
             tool: "read_file".to_string(),
             raw_arguments: json!({ "path": "/tmp/notes.txt" }).to_string(),
+            model_content_only: false,
+            is_freeform: false,
         };
         let output = McpToolOutput {
             result: codex_protocol::mcp::CallToolResult {

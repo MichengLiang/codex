@@ -194,6 +194,8 @@ impl ToolRouter {
                             server: tool_info.server_name,
                             tool: tool_info.tool.name.to_string(),
                             raw_arguments: arguments,
+                            model_content_only: tool_info.model_content_only,
+                            is_freeform: false,
                         },
                     }))
                 } else {
@@ -228,11 +230,30 @@ impl ToolRouter {
                 input,
                 call_id,
                 ..
-            } => Ok(Some(ToolCall {
-                tool_name: ToolName::plain(name),
-                call_id,
-                payload: ToolPayload::Custom { input },
-            })),
+            } => {
+                if let Some(tool_info) = session
+                    .resolve_mcp_freeform_tool_info_by_custom_name(name.as_str())
+                    .await
+                {
+                    Ok(Some(ToolCall {
+                        tool_name: tool_info.canonical_tool_name(),
+                        call_id,
+                        payload: ToolPayload::Mcp {
+                            server: tool_info.server_name,
+                            tool: tool_info.tool.name.to_string(),
+                            raw_arguments: serde_json::json!({ "freeform": input }).to_string(),
+                            model_content_only: tool_info.model_content_only,
+                            is_freeform: true,
+                        },
+                    }))
+                } else {
+                    Ok(Some(ToolCall {
+                        tool_name: ToolName::plain(name),
+                        call_id,
+                        payload: ToolPayload::Custom { input },
+                    }))
+                }
+            }
             ResponseItem::LocalShellCall {
                 id,
                 call_id,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::schema::config_schema_json;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -187,6 +188,31 @@ fn deserialize_disabled_server_config() {
 }
 
 #[test]
+fn deserialize_mcp_text_contract_flags_and_defaults() {
+    let cfg: McpServerConfig = toml::from_str(
+        r#"
+            command = "echo"
+            model_content_only = true
+            mcp_freeform = true
+        "#,
+    )
+    .expect("should deserialize MCP text contract flags");
+
+    assert!(cfg.model_content_only);
+    assert!(cfg.mcp_freeform);
+
+    let default_cfg: McpServerConfig = toml::from_str(
+        r#"
+            command = "echo"
+        "#,
+    )
+    .expect("should deserialize default MCP config");
+
+    assert!(!default_cfg.model_content_only);
+    assert!(!default_cfg.mcp_freeform);
+}
+
+#[test]
 fn deserialize_required_server_config() {
     let cfg: McpServerConfig = toml::from_str(
         r#"
@@ -364,38 +390,44 @@ fn serialize_round_trips_server_config_with_parallel_tool_calls() {
 
 #[test]
 fn deserialize_ignores_unknown_server_fields() {
-    let cfg: McpServerConfig = toml::from_str(
+    let err = toml::from_str::<McpServerConfig>(
         r#"
             command = "echo"
             trust_level = "trusted"
         "#,
     )
-    .expect("should ignore unknown server fields");
+    .expect_err("unknown MCP server fields should be rejected");
+
+    assert!(
+        err.to_string().contains("unknown field") || err.to_string().contains("trust_level"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn config_schema_includes_mcp_text_contract_flags() {
+    let schema_json = config_schema_json().expect("serialize config schema");
+    let schema_value: serde_json::Value =
+        serde_json::from_slice(&schema_json).expect("decode schema json");
+    let properties = schema_value
+        .pointer("/definitions/RawMcpServerConfig/properties")
+        .expect("RawMcpServerConfig properties should exist")
+        .as_object()
+        .expect("RawMcpServerConfig properties should be an object");
 
     assert_eq!(
-        cfg,
-        McpServerConfig {
-            transport: McpServerTransportConfig::Stdio {
-                command: "echo".to_string(),
-                args: vec![],
-                env: None,
-                env_vars: Vec::new(),
-                cwd: None,
-            },
-            experimental_environment: None,
-            enabled: true,
-            required: false,
-            supports_parallel_tool_calls: false,
-            disabled_reason: None,
-            startup_timeout_sec: None,
-            tool_timeout_sec: None,
-            default_tools_approval_mode: None,
-            enabled_tools: None,
-            disabled_tools: None,
-            scopes: None,
-            oauth_resource: None,
-            tools: HashMap::new(),
-        }
+        properties
+            .get("model_content_only")
+            .and_then(|value| value.get("type"))
+            .and_then(serde_json::Value::as_str),
+        Some("boolean")
+    );
+    assert_eq!(
+        properties
+            .get("mcp_freeform")
+            .and_then(|value| value.get("type"))
+            .and_then(serde_json::Value::as_str),
+        Some("boolean")
     );
 }
 

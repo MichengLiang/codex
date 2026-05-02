@@ -59,6 +59,8 @@ fn make_mcp_tool(
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
         server_instructions: None,
+        model_content_only: false,
+        mcp_freeform: false,
         tool: Tool {
             name: tool_name.to_string().into(),
             title: None,

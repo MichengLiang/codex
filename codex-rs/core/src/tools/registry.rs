@@ -616,6 +616,7 @@ impl From<&ToolPayload> for HookToolInput {
                 server,
                 tool,
                 raw_arguments,
+                ..
             } => HookToolInput::Mcp {
                 server: server.clone(),
                 tool: tool.clone(),

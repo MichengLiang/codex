@@ -135,6 +135,14 @@ pub struct McpServerConfig {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub supports_parallel_tool_calls: bool,
 
+    /// When `true`, model-visible MCP tool output is projected to `content[0].text`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_content_only: bool,
+
+    /// When `true`, exact `freeform: string` MCP tools are exposed as freeform tools.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp_freeform: bool,
+
     /// Reason this server was disabled after applying requirements.
     #[serde(skip)]
     pub disabled_reason: Option<McpServerDisabledReason>,
@@ -186,6 +194,7 @@ pub struct McpServerConfig {
 /// destructuring this struct so new TOML fields cannot be added here without
 /// updating the validation/mapping logic that produces [`McpServerConfig`].
 #[derive(Deserialize, Clone, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct RawMcpServerConfig {
     // stdio
@@ -225,6 +234,10 @@ pub struct RawMcpServerConfig {
     #[serde(default)]
     pub supports_parallel_tool_calls: Option<bool>,
     #[serde(default)]
+    pub model_content_only: Option<bool>,
+    #[serde(default)]
+    pub mcp_freeform: Option<bool>,
+    #[serde(default)]
     pub default_tools_approval_mode: Option<AppToolApproval>,
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
@@ -263,6 +276,8 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             enabled,
             required,
             supports_parallel_tool_calls,
+            model_content_only,
+            mcp_freeform,
             default_tools_approval_mode,
             enabled_tools,
             disabled_tools,
@@ -333,6 +348,8 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             enabled: enabled.unwrap_or_else(default_enabled),
             required: required.unwrap_or_default(),
             supports_parallel_tool_calls: supports_parallel_tool_calls.unwrap_or_default(),
+            model_content_only: model_content_only.unwrap_or_default(),
+            mcp_freeform: mcp_freeform.unwrap_or_default(),
             disabled_reason: None,
             default_tools_approval_mode,
             enabled_tools,

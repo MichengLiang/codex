@@ -48,6 +48,7 @@ fn map_mcp_tools_for_plan(mcp_tools: &HashMap<String, ToolInfo>) -> McpToolPlanI
             .map(|tool| ToolRegistryPlanMcpTool {
                 name: tool.canonical_tool_name(),
                 tool: &tool.tool,
+                mcp_freeform: tool.mcp_freeform,
             })
             .collect(),
         tool_namespaces: mcp_tools

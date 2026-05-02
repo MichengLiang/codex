@@ -124,6 +124,7 @@ fn tool_dispatch_payload(payload: &ToolPayload) -> ToolDispatchPayload {
             server,
             tool,
             raw_arguments,
+            ..
         } => ToolDispatchPayload::Mcp {
             server: server.clone(),
             tool: tool.clone(),
