@@ -1,14 +1,18 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ToolPayload;
+use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseItem;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use pretty_assertions::assert_eq;
+use rmcp::model::JsonObject;
+use rmcp::model::Tool;
 use serde_json::json;
 
 use super::ToolCall;
@@ -67,11 +71,22 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
 
 #[tokio::test]
 async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()> {
-    let (session, _) = make_session_and_context().await;
+    let (session, turn) = make_session_and_context().await;
     let session = Arc::new(session);
     let tool_name = "create_event".to_string();
 
-    let call = ToolRouter::build_tool_call(
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+        },
+    );
+    let call = router.build_tool_call(
         &session,
         ResponseItem::FunctionCall {
             id: None,
@@ -198,6 +213,84 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
         namespace_function_names(&router.model_visible_specs(), "codex_app"),
         vec![visible_tool.to_string()]
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_tool_call_does_not_route_to_deferred_exact_mcp_freeform_tool() -> anyhow::Result<()> {
+    let (session, turn) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let deferred_freeform_tool_name = "mcp__rmcp__freeform_echo".to_string();
+    let deferred_freeform_tool = ToolInfo {
+        server_name: "rmcp".to_string(),
+        callable_name: "freeform_echo".to_string(),
+        callable_namespace: "mcp__rmcp__".to_string(),
+        server_instructions: None,
+        model_content_only: true,
+        mcp_freeform: true,
+        tool: Tool {
+            name: "freeform_echo".to_string().into(),
+            title: None,
+            description: Some("Deferred freeform echo".to_string().into()),
+            input_schema: Arc::new(
+                serde_json::from_value::<JsonObject>(json!({
+                    "type": "object",
+                    "properties": {
+                        "freeform": { "type": "string" }
+                    },
+                    "required": ["freeform"],
+                    "additionalProperties": false
+                }))
+                .expect("freeform schema should deserialize"),
+            ),
+            output_schema: None,
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        },
+        connector_id: None,
+        connector_name: None,
+        plugin_display_names: Vec::new(),
+        connector_description: None,
+    };
+
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: Some(HashMap::from([(
+                deferred_freeform_tool_name.clone(),
+                deferred_freeform_tool,
+            )])),
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+        },
+    );
+
+    let call = router
+        .build_tool_call(
+            session.as_ref(),
+            ResponseItem::CustomToolCall {
+                id: None,
+                status: None,
+                call_id: "call-deferred-freeform".to_string(),
+                name: deferred_freeform_tool_name.clone(),
+                input: "raw deferred input".to_string(),
+            },
+        )
+        .await?
+        .expect("custom tool call should produce a tool call");
+
+    assert_eq!(call.tool_name, ToolName::plain(deferred_freeform_tool_name));
+    assert_eq!(call.call_id, "call-deferred-freeform");
+    match call.payload {
+        ToolPayload::Custom { input } => assert_eq!(input, "raw deferred input"),
+        other => panic!("expected plain custom payload, got {other:?}"),
+    }
 
     Ok(())
 }

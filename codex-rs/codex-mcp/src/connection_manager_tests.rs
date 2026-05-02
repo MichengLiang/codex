@@ -16,7 +16,6 @@ use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
 use crate::tools::qualify_tools;
 use crate::tools::tool_with_model_visible_input_schema;
-use codex_tools::is_exact_freeform_input_schema;
 use codex_config::Constrained;
 use codex_protocol::ToolName;
 use codex_protocol::models::PermissionProfile;
@@ -49,40 +48,6 @@ fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
             title: None,
             description: Some(format!("Test tool: {tool_name}").into()),
             input_schema: Arc::new(JsonObject::default()),
-            output_schema: None,
-            annotations: None,
-            execution: None,
-            icons: None,
-            meta: None,
-        },
-        connector_id: None,
-        connector_name: None,
-        plugin_display_names: Vec::new(),
-        connector_description: None,
-    }
-}
-
-fn create_test_tool_with_schema(
-    server_name: &str,
-    tool_name: &str,
-    input_schema: serde_json::Value,
-    mcp_freeform: bool,
-) -> ToolInfo {
-    let tool_namespace = format!("mcp__{server_name}__");
-    ToolInfo {
-        server_name: server_name.to_string(),
-        callable_name: tool_name.to_string(),
-        callable_namespace: tool_namespace,
-        server_instructions: None,
-        model_content_only: false,
-        mcp_freeform,
-        tool: Tool {
-            name: tool_name.to_string().into(),
-            title: None,
-            description: Some(format!("Test tool: {tool_name}").into()),
-            input_schema: Arc::new(
-                serde_json::from_value(input_schema).expect("test schema should deserialize"),
-            ),
             output_schema: None,
             annotations: None,
             execution: None,
@@ -749,72 +714,6 @@ async fn resolve_tool_info_accepts_canonical_namespaced_tool_names() {
             tool.tool.name.as_ref(),
         ),
         expected
-    );
-}
-
-#[tokio::test]
-async fn resolve_mcp_freeform_tool_info_by_custom_name_requires_exact_schema() {
-    let exact_tool = create_test_tool_with_schema(
-        "rmcp",
-        "freeform_echo",
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "freeform": { "type": "string" }
-            },
-            "required": ["freeform"],
-            "additionalProperties": false
-        }),
-        /*mcp_freeform*/ true,
-    );
-    assert!(is_exact_freeform_input_schema(&exact_tool.tool));
-    let non_exact_tool = create_test_tool_with_schema(
-        "rmcp",
-        "rewrite",
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "freeform": { "type": "string" },
-                "mode": { "type": "string" }
-            },
-            "required": ["freeform"],
-            "additionalProperties": false
-        }),
-        /*mcp_freeform*/ true,
-    );
-    assert!(!is_exact_freeform_input_schema(&non_exact_tool.tool));
-
-    let pending_client = futures::future::pending::<Result<ManagedClient, StartupOutcomeError>>()
-        .boxed()
-        .shared();
-    let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
-    let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let mut manager =
-        McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
-    manager.clients.insert(
-        "rmcp".to_string(),
-        AsyncManagedClient {
-            client: pending_client,
-            startup_snapshot: Some(vec![exact_tool, non_exact_tool]),
-            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            tool_plugin_provenance: Arc::new(ToolPluginProvenance::default()),
-            model_content_only: false,
-            mcp_freeform: true,
-            cancel_token: CancellationToken::new(),
-        },
-    );
-
-    assert!(
-        manager
-            .resolve_mcp_freeform_tool_info_by_custom_name("mcp__rmcp__freeform_echo")
-            .await
-            .is_some()
-    );
-    assert!(
-        manager
-            .resolve_mcp_freeform_tool_info_by_custom_name("mcp__rmcp__rewrite")
-            .await
-            .is_none()
     );
 }
 

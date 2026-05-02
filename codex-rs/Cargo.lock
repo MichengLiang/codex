@@ -2991,7 +2991,6 @@ dependencies = [
  "codex-plugin",
  "codex-protocol",
  "codex-rmcp-client",
- "codex-tools",
  "codex-utils-plugins",
  "futures",
  "pretty_assertions",

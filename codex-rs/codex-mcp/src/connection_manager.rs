@@ -52,7 +52,6 @@ use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_rmcp_client::ElicitationResponse;
-use codex_tools::is_exact_freeform_input_schema;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
@@ -619,18 +618,6 @@ impl McpConnectionManager {
         all_tools
             .into_values()
             .find(|tool| tool.canonical_tool_name() == *tool_name)
-    }
-
-    pub async fn resolve_mcp_freeform_tool_info_by_custom_name(
-        &self,
-        custom_name: &str,
-    ) -> Option<ToolInfo> {
-        let all_tools = self.list_all_tools().await;
-        all_tools.into_values().find(|tool| {
-            tool.mcp_freeform
-                && is_exact_freeform_input_schema(&tool.tool)
-                && tool.canonical_tool_name().display() == custom_name
-        })
     }
 
     async fn client_by_name(&self, name: &str) -> Result<ManagedClient> {

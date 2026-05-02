@@ -21,6 +21,7 @@ use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_tools::ToolsConfig;
+use codex_tools::is_exact_freeform_input_schema;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -41,6 +42,7 @@ pub struct ToolRouter {
     specs: Vec<ConfiguredToolSpec>,
     model_visible_specs: Vec<ToolSpec>,
     parallel_mcp_server_names: HashSet<String>,
+    direct_mcp_freeform_tools_by_custom_name: HashMap<String, ToolInfo>,
 }
 
 pub(crate) struct ToolRouterParams<'a> {
@@ -64,13 +66,34 @@ impl ToolRouter {
         } = params;
         let builder = build_specs_with_discoverable_tools(
             config,
-            mcp_tools,
+            mcp_tools.clone(),
             deferred_mcp_tools,
             unavailable_called_tools,
             discoverable_tools,
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
+        let direct_mcp_freeform_tool_names = specs
+            .iter()
+            .filter_map(|configured_tool| match &configured_tool.spec {
+                ToolSpec::Freeform(tool) => Some(tool.name.clone()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let direct_mcp_freeform_tools_by_custom_name = mcp_tools
+            .as_ref()
+            .map(|tools| {
+                tools.values()
+                    .filter(|tool| {
+                        tool.mcp_freeform
+                            && is_exact_freeform_input_schema(&tool.tool)
+                            && direct_mcp_freeform_tool_names
+                                .contains(&tool.canonical_tool_name().display())
+                    })
+                    .map(|tool| (tool.canonical_tool_name().display(), tool.clone()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
         let deferred_dynamic_tools = dynamic_tools
             .iter()
             .filter(|tool| tool.defer_loading)
@@ -97,6 +120,7 @@ impl ToolRouter {
             specs,
             model_visible_specs,
             parallel_mcp_server_names,
+            direct_mcp_freeform_tools_by_custom_name,
         }
     }
 
@@ -174,6 +198,7 @@ impl ToolRouter {
 
     #[instrument(level = "trace", skip_all, err)]
     pub async fn build_tool_call(
+        &self,
         session: &Session,
         item: ResponseItem,
     ) -> Result<Option<ToolCall>, FunctionCallError> {
@@ -231,9 +256,10 @@ impl ToolRouter {
                 call_id,
                 ..
             } => {
-                if let Some(tool_info) = session
-                    .resolve_mcp_freeform_tool_info_by_custom_name(name.as_str())
-                    .await
+                if let Some(tool_info) = self
+                    .direct_mcp_freeform_tools_by_custom_name
+                    .get(name.as_str())
+                    .cloned()
                 {
                     Ok(Some(ToolCall {
                         tool_name: tool_info.canonical_tool_name(),

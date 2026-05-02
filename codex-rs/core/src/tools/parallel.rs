@@ -53,6 +53,10 @@ impl ToolCallRuntime {
         self.router.find_spec(tool_name)
     }
 
+    pub(crate) fn router(&self) -> &ToolRouter {
+        self.router.as_ref()
+    }
+
     pub(crate) fn create_diff_consumer(
         &self,
         tool_name: &codex_tools::ToolName,
