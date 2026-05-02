@@ -69,6 +69,7 @@ impl TestToolServer {
             Self::echo_tool(),
             Self::echo_dash_tool(),
             Self::freeform_echo_tool(),
+            Self::near_miss_freeform_tool(),
             Self::cwd_tool(),
             Self::sync_tool(),
             Self::image_tool(),
@@ -152,6 +153,28 @@ impl TestToolServer {
         let mut tool = Tool::new(
             Cow::Borrowed("freeform_echo"),
             Cow::Borrowed("Echo back raw freeform input in text and structured channels."),
+            Arc::new(schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn near_miss_freeform_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "freeform": { "type": "string" },
+                "mode": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }))
+        .expect("near miss freeform tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("near_miss_freeform"),
+            Cow::Borrowed("Looks similar to a freeform tool, but keeps an extra structured argument."),
             Arc::new(schema),
         );
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
@@ -350,6 +373,12 @@ struct EchoArgs {
 #[derive(Deserialize)]
 struct FreeformEchoArgs {
     freeform: String,
+}
+
+#[derive(Deserialize)]
+struct NearMissFreeformArgs {
+    freeform: String,
+    mode: Option<String>,
 }
 
 const DEFAULT_SYNC_TIMEOUT_MS: u64 = 1_000;
@@ -556,6 +585,23 @@ impl ServerHandler for TestToolServer {
                         args.freeform
                     ))],
                     structured_content: Some(json!({ "freeform": args.freeform })),
+                    is_error: Some(false),
+                    meta: None,
+                })
+            }
+            "near_miss_freeform" => {
+                let args =
+                    Self::parse_call_args::<NearMissFreeformArgs>(&request, "near_miss_freeform")?;
+                Ok(CallToolResult {
+                    content: vec![rmcp::model::Content::text(format!(
+                        "NEAR_MISS: {} [{}]",
+                        args.freeform,
+                        args.mode.as_deref().unwrap_or("default")
+                    ))],
+                    structured_content: Some(json!({
+                        "freeform": args.freeform,
+                        "mode": args.mode,
+                    })),
                     is_error: Some(false),
                     meta: None,
                 })

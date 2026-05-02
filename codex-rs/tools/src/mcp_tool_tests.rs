@@ -1,6 +1,10 @@
+use super::is_exact_freeform_schema;
 use super::mcp_call_tool_result_output_schema;
 use super::parse_mcp_tool;
+use crate::AdditionalProperties;
 use crate::JsonSchema;
+use crate::JsonSchemaPrimitiveType;
+use crate::JsonSchemaType;
 use crate::ToolDefinition;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
@@ -123,4 +127,52 @@ fn parse_mcp_tool_preserves_output_schema_without_inferred_type() {
             defer_loading: false,
         }
     );
+}
+
+#[test]
+fn exact_freeform_schema_rejects_nullable_string_union() {
+    let schema = JsonSchema::object(
+        BTreeMap::from([(
+            "freeform".to_string(),
+            JsonSchema {
+                schema_type: Some(JsonSchemaType::Multiple(vec![
+                    JsonSchemaPrimitiveType::String,
+                    JsonSchemaPrimitiveType::Null,
+                ])),
+                ..Default::default()
+            },
+        )]),
+        Some(vec!["freeform".to_string()]),
+        Some(AdditionalProperties::Boolean(false)),
+    );
+
+    assert!(!is_exact_freeform_schema(&schema));
+}
+
+#[test]
+fn exact_freeform_schema_rejects_missing_additional_properties_false() {
+    let schema = JsonSchema::object(
+        BTreeMap::from([(
+            "freeform".to_string(),
+            JsonSchema::string(/*description*/ None),
+        )]),
+        Some(vec!["freeform".to_string()]),
+        /*additional_properties*/ None,
+    );
+
+    assert!(!is_exact_freeform_schema(&schema));
+}
+
+#[test]
+fn exact_freeform_schema_rejects_additional_properties_true() {
+    let schema = JsonSchema::object(
+        BTreeMap::from([(
+            "freeform".to_string(),
+            JsonSchema::string(/*description*/ None),
+        )]),
+        Some(vec!["freeform".to_string()]),
+        Some(AdditionalProperties::Boolean(true)),
+    );
+
+    assert!(!is_exact_freeform_schema(&schema));
 }

@@ -678,6 +678,94 @@ async fn stdio_server_freeform_round_trip_uses_custom_tool_and_content_only_outp
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[serial(mcp_test_value)]
+async fn stdio_server_non_exact_freeform_like_custom_call_falls_back_to_plain_custom_tool()
+-> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+
+    let call_id = "call-near-miss-123";
+    let server_name = "rmcp_freeform";
+    let tool_name = format!("mcp__{server_name}__near_miss_freeform");
+
+    let call_mock = mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_custom_tool_call(call_id, &tool_name, "raw near miss input"),
+            responses::ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+    let final_mock = mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_assistant_message("msg-1", "non exact custom tool fallback completed."),
+            responses::ev_completed("resp-2"),
+        ]),
+    )
+    .await;
+
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
+    let fixture = test_codex()
+        .with_config(move |config| {
+            insert_mcp_server(
+                config,
+                server_name,
+                stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
+                TestMcpServerOptions {
+                    experimental_environment: remote_aware_experimental_environment(),
+                    model_content_only: true,
+                    mcp_freeform: true,
+                    ..Default::default()
+                },
+            );
+        })
+        .build_remote_aware(&server)
+        .await?;
+    fixture
+        .codex
+        .submit(read_only_user_turn(
+            &fixture,
+            "call the rmcp near-miss freeform-like tool",
+        ))
+        .await?;
+
+    wait_for_event(&fixture.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let output_item = final_mock.single_request().custom_tool_call_output(call_id);
+    assert_eq!(output_item["type"], "custom_tool_call_output");
+    let (output_text, success) = final_mock
+        .single_request()
+        .custom_tool_call_output_content_and_success(call_id)
+        .expect("custom tool fallback output should be present");
+    let expected_output = format!("unsupported custom tool call: {tool_name}");
+    assert_eq!(
+        output_text.as_deref(),
+        Some(expected_output.as_str())
+    );
+    assert_eq!(success, None);
+
+    let request = call_mock.single_request();
+    let body = request.body_json();
+    let tools = body["tools"]
+        .as_array()
+        .expect("responses request should include tools array");
+    let names = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(
+        !names.contains(&tool_name.as_str()),
+        "non-exact freeform-like MCP tool must not be declared as custom/freeform: {body:?}"
+    );
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_cwd)]
 async fn stdio_server_uses_configured_cwd_before_runtime_fallback() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));

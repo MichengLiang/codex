@@ -191,6 +191,9 @@ fn code_mode_tool_definitions_for_spec(spec: &ToolSpec) -> Vec<CodeModeToolDefin
             }]
         }
         ToolSpec::Freeform(tool) => {
+            if is_mcp_freeform_tool_name(&tool.name) {
+                return Vec::new();
+            }
             let name = tool.name.clone();
             vec![CodeModeToolDefinition {
                 tool_name: ToolName::plain(name.clone()),
@@ -223,6 +226,10 @@ fn code_mode_tool_definitions_for_spec(spec: &ToolSpec) -> Vec<CodeModeToolDefin
         | ToolSpec::ToolSearch { .. }
         | ToolSpec::WebSearch { .. } => Vec::new(),
     }
+}
+
+fn is_mcp_freeform_tool_name(name: &str) -> bool {
+    name.starts_with("mcp__")
 }
 
 pub fn code_mode_name_for_tool_name(tool_name: &ToolName) -> String {

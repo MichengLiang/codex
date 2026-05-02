@@ -1,4 +1,5 @@
 use super::augment_tool_spec_for_code_mode;
+use super::collect_code_mode_tool_definitions;
 use super::create_code_mode_tool;
 use super::create_wait_tool;
 use super::tool_spec_to_code_mode_tool_definition;
@@ -120,6 +121,49 @@ declare const tools: { apply_patch(input: string): Promise<unknown>; };
             output_schema: None,
         })
     );
+}
+
+#[test]
+fn tool_spec_to_code_mode_tool_definition_skips_mcp_freeform_tools() {
+    let spec = ToolSpec::Freeform(FreeformTool {
+        name: "mcp__sample__apply_patch".to_string(),
+        description: "Apply a patch via MCP".to_string(),
+        format: FreeformToolFormat {
+            r#type: "text".to_string(),
+            syntax: "text".to_string(),
+            definition: String::new(),
+        },
+    });
+
+    assert_eq!(tool_spec_to_code_mode_tool_definition(&spec), None);
+}
+
+#[test]
+fn collect_code_mode_tool_definitions_skips_mcp_freeform_tools() {
+    let specs = vec![
+        ToolSpec::Freeform(FreeformTool {
+            name: "apply_patch".to_string(),
+            description: "Apply a patch".to_string(),
+            format: FreeformToolFormat {
+                r#type: "grammar".to_string(),
+                syntax: "lark".to_string(),
+                definition: "start: \"patch\"".to_string(),
+            },
+        }),
+        ToolSpec::Freeform(FreeformTool {
+            name: "mcp__sample__apply_patch".to_string(),
+            description: "Apply a patch via MCP".to_string(),
+            format: FreeformToolFormat {
+                r#type: "text".to_string(),
+                syntax: "text".to_string(),
+                definition: String::new(),
+            },
+        }),
+    ];
+
+    let definitions = collect_code_mode_tool_definitions(specs.iter());
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].name, "apply_patch");
 }
 
 #[test]

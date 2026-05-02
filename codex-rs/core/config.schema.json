@@ -1957,6 +1957,14 @@
           },
           "type": "object"
         },
+        "mcp_freeform": {
+          "default": null,
+          "type": "boolean"
+        },
+        "model_content_only": {
+          "default": null,
+          "type": "boolean"
+        },
         "name": {
           "default": null,
           "description": "Legacy display-name field accepted for backward compatibility.",

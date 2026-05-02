@@ -2318,6 +2318,103 @@ text(JSON.stringify({
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn code_mode_does_not_expose_mcp_freeform_tools_on_global_tools_object() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let rmcp_test_server_bin = stdio_server_bin()?;
+    let mut builder = test_codex().with_model("test-gpt-5.1-codex").with_config(move |config| {
+        let _ = config.features.enable(Feature::CodeMode);
+
+        let mut servers = config.mcp_servers.get().clone();
+        servers.insert(
+            "rmcp".to_string(),
+            McpServerConfig {
+                transport: McpServerTransportConfig::Stdio {
+                    command: rmcp_test_server_bin,
+                    args: Vec::new(),
+                    env: Some(HashMap::from([(
+                        "MCP_TEST_VALUE".to_string(),
+                        "propagated-env".to_string(),
+                    )])),
+                    env_vars: Vec::new(),
+                    cwd: None,
+                },
+                experimental_environment: None,
+                enabled: true,
+                required: false,
+                supports_parallel_tool_calls: false,
+                model_content_only: false,
+                mcp_freeform: true,
+                disabled_reason: None,
+                startup_timeout_sec: Some(Duration::from_secs(10)),
+                tool_timeout_sec: None,
+                default_tools_approval_mode: None,
+                enabled_tools: None,
+                disabled_tools: None,
+                scopes: None,
+                oauth_resource: None,
+                tools: HashMap::new(),
+            },
+        );
+        config
+            .mcp_servers
+            .set(servers)
+            .expect("test mcp servers should accept any configuration");
+    });
+    let test = builder.build(&server).await?;
+
+    let code = r#"
+text(JSON.stringify({
+  hasNamespacedEcho: typeof tools.mcp__rmcp__echo === "function",
+  hasFreeformEcho: typeof tools.mcp__rmcp__freeform_echo === "function",
+  hasNearMissFreeform: typeof tools.mcp__rmcp__near_miss_freeform === "function",
+}));
+"#;
+
+    responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_custom_tool_call("call-1", "exec", code),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+    let second_mock = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-2"),
+        ]),
+    )
+    .await;
+
+    test.submit_turn_with_approval_and_permission_profile(
+        "inspect code mode MCP tool exposure",
+        AskForApproval::Never,
+        PermissionProfile::read_only(),
+    )
+    .await?;
+
+    let req = second_mock.single_request();
+    let (output, success) = custom_tool_output_body_and_success(&req, "call-1");
+    assert_ne!(success, Some(false), "exec global rmcp exposure failed: {output}");
+
+    let parsed: Value = serde_json::from_str(&output)?;
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "hasNamespacedEcho": true,
+            "hasFreeformEcho": false,
+            "hasNearMissFreeform": false,
+        })
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn code_mode_exposes_normalized_illegal_mcp_tool_names() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
