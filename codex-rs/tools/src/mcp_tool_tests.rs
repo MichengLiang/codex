@@ -1,3 +1,4 @@
+use super::is_exact_freeform_input_schema;
 use super::is_exact_freeform_schema;
 use super::mcp_call_tool_result_output_schema;
 use super::parse_mcp_tool;
@@ -150,6 +151,38 @@ fn exact_freeform_schema_rejects_nullable_string_union() {
 }
 
 #[test]
+fn exact_freeform_schema_rejects_non_object_schema() {
+    let schema = JsonSchema::string(/*description*/ None);
+
+    assert!(!is_exact_freeform_schema(&schema));
+}
+
+#[test]
+fn exact_freeform_schema_rejects_wrong_property_name() {
+    let schema = JsonSchema::object(
+        BTreeMap::from([("text".to_string(), JsonSchema::string(/*description*/ None))]),
+        Some(vec!["text".to_string()]),
+        Some(AdditionalProperties::Boolean(false)),
+    );
+
+    assert!(!is_exact_freeform_schema(&schema));
+}
+
+#[test]
+fn exact_freeform_schema_rejects_missing_required() {
+    let schema = JsonSchema::object(
+        BTreeMap::from([(
+            "freeform".to_string(),
+            JsonSchema::string(/*description*/ None),
+        )]),
+        /*required*/ None,
+        Some(AdditionalProperties::Boolean(false)),
+    );
+
+    assert!(!is_exact_freeform_schema(&schema));
+}
+
+#[test]
 fn exact_freeform_schema_rejects_missing_additional_properties_false() {
     let schema = JsonSchema::object(
         BTreeMap::from([(
@@ -175,4 +208,62 @@ fn exact_freeform_schema_rejects_additional_properties_true() {
     );
 
     assert!(!is_exact_freeform_schema(&schema));
+}
+
+#[test]
+fn exact_freeform_input_schema_accepts_contract_shape() {
+    let tool = mcp_tool(
+        "freeform",
+        "Exact freeform input",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "freeform": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }),
+    );
+
+    assert!(is_exact_freeform_input_schema(&tool));
+}
+
+#[test]
+fn exact_freeform_input_schema_rejects_string_constraints() {
+    let tool = mcp_tool(
+        "freeform",
+        "Constrained freeform input",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "freeform": {
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }),
+    );
+
+    assert!(!is_exact_freeform_input_schema(&tool));
+}
+
+#[test]
+fn exact_freeform_input_schema_rejects_top_level_extra_keywords() {
+    let tool = mcp_tool(
+        "freeform",
+        "Annotated freeform input",
+        serde_json::json!({
+            "type": "object",
+            "description": "extra schema annotation",
+            "properties": {
+                "freeform": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }),
+    );
+
+    assert!(!is_exact_freeform_input_schema(&tool));
 }

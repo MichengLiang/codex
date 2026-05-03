@@ -2413,7 +2413,7 @@ text(JSON.stringify({
         serde_json::json!({
             "hasNamespacedEcho": true,
             "hasFreeformEcho": false,
-            "hasNearMissFreeform": false,
+            "hasNearMissFreeform": true,
         })
     );
 

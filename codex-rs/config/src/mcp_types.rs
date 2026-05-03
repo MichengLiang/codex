@@ -194,7 +194,6 @@ pub struct McpServerConfig {
 /// destructuring this struct so new TOML fields cannot be added here without
 /// updating the validation/mapping logic that produces [`McpServerConfig`].
 #[derive(Deserialize, Clone, JsonSchema)]
-#[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct RawMcpServerConfig {
     // stdio

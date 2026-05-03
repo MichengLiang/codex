@@ -7,6 +7,7 @@ use crate::tools::context::ToolPayload;
 use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
@@ -219,44 +220,98 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
 }
 
 #[tokio::test]
+async fn find_spec_returns_top_level_function_and_freeform_specs() -> anyhow::Result<()> {
+    let (_, turn) = make_session_and_context().await;
+    let mut tools_config = turn.tools_config;
+    tools_config.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
+    let dynamic_tools = vec![DynamicToolSpec {
+        namespace: None,
+        name: "dynamic_function".to_string(),
+        description: "Top-level dynamic function.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        }),
+        defer_loading: false,
+    }];
+
+    let router = ToolRouter::from_config(
+        &tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: &dynamic_tools,
+        },
+    );
+
+    assert!(matches!(
+        router.find_spec(&ToolName::plain("dynamic_function")),
+        Some(ToolSpec::Function(tool)) if tool.name == "dynamic_function"
+    ));
+    assert!(matches!(
+        router.find_spec(&ToolName::plain("apply_patch")),
+        Some(ToolSpec::Freeform(tool)) if tool.name == "apply_patch"
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_tool_search_call_builds_tool_search_payload() -> anyhow::Result<()> {
+    let (session, turn) = make_session_and_context().await;
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+        },
+    );
+
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::ToolSearchCall {
+                id: None,
+                call_id: Some("call-tool-search".to_string()),
+                status: None,
+                execution: "client".to_string(),
+                arguments: json!({
+                    "query": "freeform",
+                    "limit": 3,
+                }),
+            },
+        )
+        .await?
+        .expect("client tool_search call should produce a tool call");
+
+    assert_eq!(call.tool_name, ToolName::plain("tool_search"));
+    assert_eq!(call.call_id, "call-tool-search");
+    match call.payload {
+        ToolPayload::ToolSearch { arguments } => {
+            assert_eq!(arguments.query, "freeform");
+            assert_eq!(arguments.limit, Some(3));
+        }
+        other => panic!("expected tool search payload, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn custom_tool_call_does_not_route_to_deferred_exact_mcp_freeform_tool() -> anyhow::Result<()>
 {
     let (session, turn) = make_session_and_context().await;
     let session = Arc::new(session);
     let deferred_freeform_tool_name = "mcp__rmcp__freeform_echo".to_string();
-    let deferred_freeform_tool = ToolInfo {
-        server_name: "rmcp".to_string(),
-        callable_name: "freeform_echo".to_string(),
-        callable_namespace: "mcp__rmcp__".to_string(),
-        server_instructions: None,
-        model_content_only: true,
-        mcp_freeform: true,
-        tool: Tool {
-            name: "freeform_echo".to_string().into(),
-            title: None,
-            description: Some("Deferred freeform echo".to_string().into()),
-            input_schema: Arc::new(
-                serde_json::from_value::<JsonObject>(json!({
-                    "type": "object",
-                    "properties": {
-                        "freeform": { "type": "string" }
-                    },
-                    "required": ["freeform"],
-                    "additionalProperties": false
-                }))
-                .expect("freeform schema should deserialize"),
-            ),
-            output_schema: None,
-            annotations: None,
-            execution: None,
-            icons: None,
-            meta: None,
-        },
-        connector_id: None,
-        connector_name: None,
-        plugin_display_names: Vec::new(),
-        connector_description: None,
-    };
+    let deferred_freeform_tool = exact_freeform_tool_info("rmcp", "freeform_echo");
 
     let router = ToolRouter::from_config(
         &turn.tools_config,
@@ -295,6 +350,97 @@ async fn custom_tool_call_does_not_route_to_deferred_exact_mcp_freeform_tool() -
     }
 
     Ok(())
+}
+
+#[tokio::test]
+async fn custom_tool_call_does_not_route_to_code_mode_only_hidden_mcp_freeform_tool()
+-> anyhow::Result<()> {
+    let (session, turn) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let mut tools_config = turn.tools_config.clone();
+    tools_config.code_mode_enabled = true;
+    tools_config.code_mode_only_enabled = true;
+    let freeform_tool = exact_freeform_tool_info("rmcp", "freeform_echo");
+    let freeform_tool_name = freeform_tool.canonical_tool_name().display();
+
+    let router = ToolRouter::from_config(
+        &tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: Some(HashMap::from([(freeform_tool_name.clone(), freeform_tool)])),
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+        },
+    );
+
+    assert!(
+        router
+            .model_visible_specs()
+            .iter()
+            .all(|spec| spec.name() != freeform_tool_name),
+        "code-mode-only should hide direct MCP freeform tool from the model-visible tool list"
+    );
+
+    let call = router
+        .build_tool_call(
+            session.as_ref(),
+            ResponseItem::CustomToolCall {
+                id: None,
+                status: None,
+                call_id: "call-hidden-freeform".to_string(),
+                name: freeform_tool_name.clone(),
+                input: "raw hidden input".to_string(),
+            },
+        )
+        .await?
+        .expect("custom tool call should produce a tool call");
+
+    assert_eq!(call.tool_name, ToolName::plain(freeform_tool_name));
+    assert_eq!(call.call_id, "call-hidden-freeform");
+    match call.payload {
+        ToolPayload::Custom { input } => assert_eq!(input, "raw hidden input"),
+        other => panic!("expected plain custom payload, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+fn exact_freeform_tool_info(server_name: &str, tool_name: &str) -> ToolInfo {
+    ToolInfo {
+        server_name: server_name.to_string(),
+        callable_name: tool_name.to_string(),
+        callable_namespace: format!("mcp__{server_name}__"),
+        server_instructions: None,
+        model_content_only: true,
+        mcp_freeform: true,
+        tool: Tool {
+            name: tool_name.to_string().into(),
+            title: None,
+            description: Some("Freeform echo".to_string().into()),
+            input_schema: Arc::new(
+                serde_json::from_value::<JsonObject>(json!({
+                    "type": "object",
+                    "properties": {
+                        "freeform": { "type": "string" }
+                    },
+                    "required": ["freeform"],
+                    "additionalProperties": false
+                }))
+                .expect("freeform schema should deserialize"),
+            ),
+            output_schema: None,
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        },
+        connector_id: None,
+        connector_name: None,
+        plugin_display_names: Vec::new(),
+        connector_description: None,
+    }
 }
 
 fn namespace_function_names(specs: &[ToolSpec], namespace_name: &str) -> Vec<String> {

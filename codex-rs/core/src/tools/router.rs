@@ -73,9 +73,29 @@ impl ToolRouter {
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
-        let direct_mcp_freeform_tool_names = specs
+        let deferred_dynamic_tools = dynamic_tools
             .iter()
-            .filter_map(|configured_tool| match &configured_tool.spec {
+            .filter(|tool| tool.defer_loading)
+            .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
+            .collect::<HashSet<_>>();
+        let model_visible_specs: Vec<ToolSpec> = specs
+            .iter()
+            .filter_map(|configured_tool| {
+                if config.code_mode_only_enabled
+                    && codex_code_mode::is_code_mode_nested_tool(configured_tool.name())
+                {
+                    return None;
+                }
+
+                filter_deferred_dynamic_tool_spec(
+                    configured_tool.spec.clone(),
+                    &deferred_dynamic_tools,
+                )
+            })
+            .collect();
+        let direct_mcp_freeform_tool_names = model_visible_specs
+            .iter()
+            .filter_map(|spec| match spec {
                 ToolSpec::Freeform(tool) => Some(tool.name.clone()),
                 _ => None,
             })
@@ -95,26 +115,6 @@ impl ToolRouter {
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
-        let deferred_dynamic_tools = dynamic_tools
-            .iter()
-            .filter(|tool| tool.defer_loading)
-            .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
-            .collect::<HashSet<_>>();
-        let model_visible_specs = specs
-            .iter()
-            .filter_map(|configured_tool| {
-                if config.code_mode_only_enabled
-                    && codex_code_mode::is_code_mode_nested_tool(configured_tool.name())
-                {
-                    return None;
-                }
-
-                filter_deferred_dynamic_tool_spec(
-                    configured_tool.spec.clone(),
-                    &deferred_dynamic_tools,
-                )
-            })
-            .collect();
 
         Self {
             registry,

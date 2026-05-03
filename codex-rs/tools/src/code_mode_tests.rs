@@ -140,7 +140,7 @@ fn tool_spec_to_code_mode_tool_definition_skips_mcp_freeform_tools() {
 
 #[test]
 fn collect_code_mode_tool_definitions_skips_mcp_freeform_tools() {
-    let specs = vec![
+    let specs = [
         ToolSpec::Freeform(FreeformTool {
             name: "apply_patch".to_string(),
             description: "Apply a patch".to_string(),

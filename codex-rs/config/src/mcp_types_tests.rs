@@ -390,17 +390,23 @@ fn serialize_round_trips_server_config_with_parallel_tool_calls() {
 
 #[test]
 fn deserialize_ignores_unknown_server_fields() {
-    let err = toml::from_str::<McpServerConfig>(
+    let cfg = toml::from_str::<McpServerConfig>(
         r#"
             command = "echo"
             trust_level = "trusted"
         "#,
     )
-    .expect_err("unknown MCP server fields should be rejected");
+    .expect("unknown MCP server fields should be ignored");
 
-    assert!(
-        err.to_string().contains("unknown field") || err.to_string().contains("trust_level"),
-        "unexpected error: {err}"
+    assert_eq!(
+        cfg.transport,
+        McpServerTransportConfig::Stdio {
+            command: "echo".to_string(),
+            args: Vec::new(),
+            env: None,
+            env_vars: Vec::new(),
+            cwd: None,
+        }
     );
 }
 

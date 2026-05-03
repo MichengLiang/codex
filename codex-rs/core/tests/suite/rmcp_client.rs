@@ -749,12 +749,11 @@ async fn stdio_server_non_exact_freeform_like_custom_call_falls_back_to_plain_cu
     let tools = body["tools"]
         .as_array()
         .expect("responses request should include tools array");
-    let names = tools
-        .iter()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .collect::<Vec<_>>();
     assert!(
-        !names.contains(&tool_name.as_str()),
+        !tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .any(|name| name == tool_name),
         "non-exact freeform-like MCP tool must not be declared as custom/freeform: {body:?}"
     );
 

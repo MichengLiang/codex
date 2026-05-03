@@ -101,9 +101,44 @@ pub fn is_exact_freeform_schema(schema: &JsonSchema) -> bool {
 }
 
 pub fn is_exact_freeform_input_schema(tool: &rmcp::model::Tool) -> bool {
-    parse_mcp_tool(tool)
-        .map(|definition| is_exact_freeform_schema(&definition.input_schema))
-        .unwrap_or(false)
+    let schema = JsonValue::Object(tool.input_schema.as_ref().clone());
+    is_exact_freeform_input_schema_value(&schema)
+}
+
+fn is_exact_freeform_input_schema_value(schema: &JsonValue) -> bool {
+    let Some(schema) = schema.as_object() else {
+        return false;
+    };
+    if schema.len() != 4 {
+        return false;
+    }
+    if schema.get("type").and_then(JsonValue::as_str) != Some("object") {
+        return false;
+    }
+    if schema
+        .get("additionalProperties")
+        .and_then(JsonValue::as_bool)
+        != Some(false)
+    {
+        return false;
+    }
+    let Some(required) = schema.get("required").and_then(JsonValue::as_array) else {
+        return false;
+    };
+    if required.len() != 1 || required[0].as_str() != Some("freeform") {
+        return false;
+    }
+
+    let Some(properties) = schema.get("properties").and_then(JsonValue::as_object) else {
+        return false;
+    };
+    if properties.len() != 1 {
+        return false;
+    }
+    let Some(freeform) = properties.get("freeform").and_then(JsonValue::as_object) else {
+        return false;
+    };
+    freeform.len() == 1 && freeform.get("type").and_then(JsonValue::as_str) == Some("string")
 }
 
 pub fn mcp_tool_to_freeform_tool(

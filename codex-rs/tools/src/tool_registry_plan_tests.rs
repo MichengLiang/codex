@@ -30,6 +30,7 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::WebSearchToolType;
@@ -2486,6 +2487,72 @@ fn non_exact_mcp_freeform_schema_stays_namespaced_function_tool() {
             .all(|tool| tool.name() != "mcp__sample__rewrite"),
         "non-exact schema must not become a top-level freeform tool"
     );
+}
+
+#[test]
+fn apply_patch_function_tool_type_uses_json_tool() {
+    let mut model_info = model_info();
+    model_info.apply_patch_tool_type = Some(ApplyPatchToolType::Function);
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, handlers) = build_specs(
+        &config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_eq!(
+        find_tool(&tools, "apply_patch").spec,
+        create_apply_patch_json_tool()
+    );
+    assert!(handlers.iter().any(|handler| {
+        handler.name == ToolName::plain("apply_patch")
+            && handler.kind == ToolHandlerKind::ApplyPatch
+    }));
+}
+
+#[test]
+fn experimental_list_dir_tool_registers_when_supported_by_model() {
+    let mut model_info = model_info();
+    model_info
+        .experimental_supported_tools
+        .push("list_dir".to_string());
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, handlers) = build_specs(
+        &config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_eq!(find_tool(&tools, "list_dir").spec, create_list_dir_tool());
+    assert!(handlers.iter().any(|handler| {
+        handler.name == ToolName::plain("list_dir") && handler.kind == ToolHandlerKind::ListDir
+    }));
 }
 
 fn discoverable_connector(id: &str, name: &str, description: &str) -> DiscoverableTool {
