@@ -22,6 +22,8 @@ c9caa71aab docs: freeze MCP text contract design
 46894618a7 fix: tighten MCP freeform routing boundaries
 eddbeb38ae fix: scope MCP freeform routing to direct exposure
 ec97a4be4c docs: add MCP text contract review report
+bfcc68562f docs: record MCP text contract implementation status
+12eefdc86e 强化 MCP 文本契约的路由与校验边界
 ```
 
 The process review report created in `ec97a4be4c` is superseded by this status document. Its durable information is captured here; the report itself is not part of the long-lived contract record.
@@ -37,7 +39,7 @@ model_content_only = true
 mcp_freeform = true
 ```
 
-Both fields default to `false`. Both fields are present in the generated config schema. Unknown-field rejection remains part of the raw MCP server config behavior.
+Both fields default to `false`. Both fields are present in the generated config schema. Runtime TOML deserialization keeps the existing Codex compatibility behavior for MCP server tables: unsupported fields are ignored rather than rejected. The generated schema still describes the supported field set for editors and tooling.
 
 ### Model Content Projection
 
@@ -279,6 +281,32 @@ cargo test -q -p codex-config config_schema_includes_mcp_text_contract_flags --m
 
 Those commands passed during review. The full workspace test suite was not run as part of that focused review.
 
+## Post-Review Hardening
+
+Commit `12eefdc86e` closed the review findings that affected the contract boundary:
+
+- MCP freeform exact-schema recognition now checks the raw MCP `input_schema` JSON. A schema with extra top-level keywords, string constraints, additional properties, a missing `required` entry, or a different field name remains a normal namespaced function tool.
+- Custom tool call routing now uses only model-visible direct MCP freeform tools. A code-mode-only, deferred, or otherwise hidden MCP freeform tool does not become reachable through a same-named custom tool call.
+- Runtime MCP server config deserialization preserves upstream Codex compatibility for unknown fields while the generated schema continues to expose the supported fields.
+
+Focused nextest verification after that hardening covered:
+
+```bash
+RUST_MIN_STACK=8388608 cargo nextest run -p codex-tools exact_freeform
+RUST_MIN_STACK=8388608 cargo nextest run -p codex-config mcp_text_contract
+RUST_MIN_STACK=8388608 cargo nextest run -p codex-core freeform
+RUST_MIN_STACK=8388608 cargo nextest run -p codex-core tools::router
+```
+
+The current coverage targets for the contract-relevant production files are:
+
+```text
+codex-rs/tools/src/mcp_tool.rs                 92.24% lines
+codex-rs/tools/src/tool_registry_plan.rs       91.41% lines
+codex-rs/tools/src/code_mode.rs                98.48% lines
+codex-rs/core/src/tools/router.rs              90.80% lines
+```
+
 ## Residual Verification Gaps
 
 The following items are not proven by the current black-box harness:
@@ -286,7 +314,7 @@ The following items are not proven by the current black-box harness:
 - `isError = true` with `content[0].text` projects only the text to the model while host consumers retain error state.
 - Empty `content[0].text` projects to an empty model-visible output without generated diagnostic text.
 - Default behavior remains unchanged when `model_content_only` and `mcp_freeform` are omitted or set to `false`.
-- Config unknown-field rejection remains intact for misspelled MCP text contract fields.
+- Generated-schema diagnostics for misspelled MCP text contract fields are not proven by the black-box harness. Runtime TOML deserialization intentionally ignores unknown MCP server fields for compatibility; the generated schema is the supported-field signal for editors and tooling.
 
 These items should be treated as boundary acceptance candidates before broad integration or upstream submission. They do not block local continuation from this branch, but they are not black-box closed.
 
