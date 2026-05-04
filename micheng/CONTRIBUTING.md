@@ -2,6 +2,15 @@
 
 本文档规定 `MichengLiang/codex` fork 的维护流程。README 只描述仓库结构和文档入口；本文件是分支、同步、提交、验证和冲突处理的单一事实来源。
 
+## 上游规则入口
+
+本 fork 的个人维护规则建立在官方仓库规则之上。开始代码修改、同步上游或准备提交前，先阅读官方入口：
+
+- [官方贡献指南](../docs/contributing.md)：记录官方对外部贡献、开发流程、测试、PR 和 CLA 的要求。
+- [仓库代理规则](../AGENTS.md)：记录 `codex-rs` 的 Rust 编码约定、测试要求、Bazel 注意事项和高频维护规则。
+
+本文件只记录 `MichengLiang/codex` fork 的附加纪律。官方文档已经规定的通用贡献要求不在这里重复；当官方规则更新时，以官方文件当前内容为准。
+
 ## 基本原则
 
 - `upstream/main` 是官方基线，只从官方仓库拉取。
@@ -176,6 +185,78 @@ RUST_MIN_STACK=8388608 cargo nextest run --no-fail-fast \
 - 为什么该失败不属于当前改动路径。
 
 不得把带无关失败的全量命令描述为“全部通过”。
+
+## 本地 Cargo 加速与构建产物维护
+
+本 fork 的日常 MCP Text Contract 验证主要走 Cargo 路径。`codex-rs` 是大型 Rust workspace，本地开发默认使用用户级 `sccache` 加速 Cargo 编译，但不把 `rustc-wrapper` 写入仓库 tracked `.cargo/config.toml`。
+
+本机自用 release binary 使用 [local-release-build.md](local-release-build.md) 中记录的 `codex-micheng` 流程。默认入口是：
+
+```bash
+micheng/scripts/build-codex-micheng.sh
+```
+
+该脚本为本地自用构建覆盖 release profile：使用 thin LTO 和 16 个 codegen units，安装到 `~/.local/bin/codex-micheng`，并默认保留 workspace `target` 作为受控构建工作集。官方 release profile 仍保留在 `codex-rs/Cargo.toml`，需要复现官方发布构建时再直接运行原始 `cargo build --release -p codex-cli --bin codex`。
+
+如果当前机器缺少 `sccache`，先安装用户可用的编译缓存工具：
+
+```bash
+sudo apt-get install -y sccache
+```
+
+用户级环境文件位于：
+
+```text
+~/.config/codex-dev/codex-rs-env.sh
+```
+
+进入 Rust workspace 后启用本地开发环境：
+
+```bash
+cd codex-rs
+source ~/.config/codex-dev/codex-rs-env.sh
+sccache --start-server
+```
+
+该环境设置：
+
+```bash
+export RUSTC_WRAPPER=sccache
+export SCCACHE_DIR="$HOME/.cache/sccache-codex"
+export SCCACHE_CACHE_SIZE=40G
+export RUST_MIN_STACK=8388608
+```
+
+`sccache` 只服务本机 Cargo 开发循环。不要把该配置提交到上游同步分支，也不要用它接管 Bazel；Bazel 继续使用仓库 `.bazelrc` 中的 Bazel cache 配置。
+
+日常热开发保留 Cargo incremental 默认行为。只有在清理 `target` 后重建、跨 worktree 复用缓存或需要更高 `sccache` 命中率的冷构建场景，才临时使用：
+
+```bash
+CARGO_INCREMENTAL=0 cargo nextest run -p codex-core freeform
+```
+
+覆盖率和大范围验证应避免污染普通开发 `target`。需要生成覆盖率摘要时，优先使用独立 target 目录：
+
+```bash
+CARGO_TARGET_DIR=target-coverage cargo llvm-cov nextest --no-clean --json --summary-only \
+  --output-path ../tmp/mcp-text-contract-coverage/codex-tools.json \
+  -p codex-tools
+```
+
+构建产物维护时只清理可再生目录，例如 `codex-rs/target/debug`、`codex-rs/target/release`、`codex-rs/target/rust-analyzer` 或专用 coverage target。`codex-rs/target` 默认允许增长，90GiB 是人工复核阈值而不是自动错误。需要回收空间时显式运行：
+
+```bash
+CODEX_MICHENG_CLEAN_TARGET=1 micheng/scripts/build-codex-micheng.sh
+```
+
+不要把 `tmp/mcp-text-contract-blackbox/`、`micheng/` 文档或其他验证证据当作构建缓存清理。
+
+清理或调参后，用以下命令记录状态：
+
+```bash
+sccache --show-stats
+du -sh target ~/.cache/sccache-codex
+```
 
 ## 冲突处理
 

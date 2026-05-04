@@ -52,6 +52,12 @@ rmcp-counter-reference.md           -> rmcp 参考实验记录
 
 其中设计文档是 MCP Text Contract 行为边界的首要事实来源。贡献指南只规定维护这些行为时的工作纪律。
 
+本机 fork 使用笔记：
+
+```text
+local-release-build.md -> 本地日用 release 构建、codex-micheng 安装名和 target 清理约定
+```
+
 ## 当前基线
 
 整理完成时，官方基线为：
