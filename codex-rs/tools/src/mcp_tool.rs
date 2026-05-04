@@ -151,7 +151,7 @@ pub fn mcp_tool_to_freeform_tool(
         description: definition.description,
         format: FreeformToolFormat {
             r#type: "text".to_string(),
-            syntax: "text".to_string(),
+            syntax: String::new(),
             definition: String::new(),
         },
     })

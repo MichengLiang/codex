@@ -1,12 +1,14 @@
 use super::is_exact_freeform_input_schema;
 use super::is_exact_freeform_schema;
 use super::mcp_call_tool_result_output_schema;
+use super::mcp_tool_to_freeform_tool;
 use super::parse_mcp_tool;
 use crate::AdditionalProperties;
 use crate::JsonSchema;
 use crate::JsonSchemaPrimitiveType;
 use crate::JsonSchemaType;
 use crate::ToolDefinition;
+use crate::ToolName;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 
@@ -226,6 +228,37 @@ fn exact_freeform_input_schema_accepts_contract_shape() {
     );
 
     assert!(is_exact_freeform_input_schema(&tool));
+}
+
+#[test]
+fn mcp_freeform_text_tool_serializes_to_official_text_format() {
+    let tool = mcp_tool(
+        "freeform",
+        "Exact freeform input",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "freeform": { "type": "string" }
+            },
+            "required": ["freeform"],
+            "additionalProperties": false
+        }),
+    );
+
+    let freeform_tool =
+        mcp_tool_to_freeform_tool(&ToolName::namespaced("mcp__sample__", "freeform"), &tool)
+            .expect("convert MCP freeform tool");
+
+    assert_eq!(
+        serde_json::to_value(freeform_tool).expect("serialize freeform tool"),
+        serde_json::json!({
+            "name": "mcp__sample__freeform",
+            "description": "Exact freeform input",
+            "format": {
+                "type": "text"
+            }
+        })
+    );
 }
 
 #[test]
