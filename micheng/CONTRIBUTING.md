@@ -100,7 +100,7 @@ MCP Text Contract 的行为边界以 [Codex MCP Text Contract 设计文档.md](<
 
 - `model_content_only`：模型可见输出只投影为 MCP `content[0].text`。
 - `mcp_freeform`：只有用户显式配置的 direct MCP server 参与 freeform 暴露。
-- exact freeform schema：只接受单字段 `{ freeform: string }`、`required = ["freeform"]`、`additionalProperties = false` 的精确输入 schema。
+- freeform schema：只接受唯一 required 字符串字段 `{ freeform: string }`。Schema 和字段级 `description` / `title` 等 annotation 不改变输入形状；字段级 `description` 应进入 Responses custom tool 的工具描述。显式允许额外输入字段的 schema 不得被识别为 freeform。
 - custom freeform routing：Responses custom tool call 的原始文本必须包装为 `{ "freeform": <input> }` 后再调用 MCP。
 - 隐藏工具边界：deferred、code-mode-only 或未暴露给当前模型的 MCP freeform 工具不得被 custom tool call 隐式路由。
 - code mode 边界：MCP freeform 工具不进入 code-mode nested tools。

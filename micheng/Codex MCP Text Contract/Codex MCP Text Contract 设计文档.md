@@ -134,7 +134,7 @@ Plugin-provided MCP server 的 policy overlay 使用 `PluginMcpServerConfig`，�
 
 Codex 应当能够把显式 opt-in MCP server 的模型可见输出投影为 `content[0].text`。模型应当看到 MCP server 作者为模型准备的文本，而不是 protocol-shaped result wrapper。
 
-Codex 应当能够把显式 opt-in MCP server 中 schema 精确等于唯一 `freeform: string` 字段的 tool 暴露为 Responses custom/freeform tool。模型应当直接写原始 freeform 文本，而不是手动构造 JSON arguments。
+Codex 应当能够把显式 opt-in MCP server 中语义上只有唯一 required `freeform: string` 输入字段的 tool 暴露为 Responses custom/freeform tool。模型应当直接写原始 freeform 文本，而不是手动构造 JSON arguments。
 
 MCP server 作者应当能够通过两个稳定动作表达意图：
 
@@ -294,7 +294,7 @@ MCP server 作者在启用 contract 时会把模型应读内容放入 `content[0
 - `model_content_only` 不改变 MCP wire result。
 - `model_content_only` 不向模型输出 `structuredContent`、`isError`、`_meta`、MCP `content` wrapper 或 Codex wall-time header。
 - `mcp_freeform` 不改变 MCP server 接收标准 arguments object 的事实。
-- freeform recognition requires exact single required string field named `freeform`。
+- freeform recognition requires one required string input field named `freeform` and no additional input fields。
 - Empty `content[0].text` projects to empty model output。
 - MCP freeform tool 的 model-visible custom name 必须能解析回唯一 `ToolInfo`。
 
@@ -330,7 +330,7 @@ freeform MCP tool 的 Responses custom tool name 使用该 MCP tool 的 canonica
 
 #### 4.6.1 部件职责
 
-MCP tool discovery 部件负责读取 tool schema。Freeform recognizer 负责判断 schema 是否精确匹配 `freeform: string`。Tool declaration builder 负责把匹配工具暴露为 Responses custom/freeform tool。MCP execution adapter 负责把 custom input 包回 MCP arguments。Result projector 负责把 `content[0].text` 写入模型上下文。Trace/log/hook 部件负责保存完整结果。
+MCP tool discovery 部件负责读取 tool schema。Freeform recognizer 负责判断 schema 是否表达唯一 required `freeform: string` 输入字段。Tool declaration builder 负责把匹配工具暴露为 Responses custom/freeform tool，并把 `freeform` 字段说明合并进 custom tool description。MCP execution adapter 负责把 custom input 包回 MCP arguments。Result projector 负责把 `content[0].text` 写入模型上下文。Trace/log/hook 部件负责保存完整结果。
 
 Config parser 负责接收 server-level `model_content_only` 和 `mcp_freeform`。MCP tool exposure 部件负责把每个 `ToolInfo` 与所属 server config 关联。Custom call router 负责在 `ResponseItem::CustomToolCall` 中识别 MCP freeform tool name，并生成 MCP payload，而不是落入普通 `ToolPayload::Custom`。Code-mode nested tool path 若不能生成 Responses custom call，则首版不要求将 MCP freeform 暴露给 code-mode nested tool list。
 
@@ -374,7 +374,7 @@ Tool 从 raw MCP definition 转为 model-visible function tool 或 model-visible
 
 #### 4.7.5 是否存在非法状态？
 
-存在。启用 `mcp_freeform` 后，某 tool 声称 freeform 但 schema 不精确匹配唯一 `freeform: string`，则该 tool 不被识别为 freeform。启用 `model_content_only` 后，server 返回非 text content，则模型投影为空或无模型可见文本；这是工具与 contract 不一致，属于 server 设计问题，不由模型输出层修复。
+存在。启用 `mcp_freeform` 后，某 tool 的 schema 不表达唯一 required `freeform: string` 输入字段，或显式允许额外输入字段，则该 tool 不被识别为 freeform。启用 `model_content_only` 后，server 返回非 text content，则模型投影为空或无模型可见文本；这是工具与 contract 不一致，属于 server 设计问题，不由模型输出层修复。
 
 存在另一个实现非法状态：freeform tool 声明为 Responses custom tool，但 custom call name 不能解析回唯一 MCP `ToolInfo`。该状态必须在 tool declaration 构建阶段被排除；不能等到工具调用时猜测 server 或 tool。
 
@@ -453,8 +453,8 @@ Codex 发给 MCP server：
 - pretty text + structuredContent result 只把 pretty text 给模型。
 - 空 text result 给模型空。
 - isError true result 给模型 content text。
-- exact freeform schema 映射为 custom/freeform tool。
-- 非 exact schema 保持普通 MCP tool。
+- freeform schema 映射为 custom/freeform tool。
+- 非 freeform schema 保持普通 MCP tool。
 
 #### 4.9.3 边界条件是什么？
 
@@ -476,7 +476,7 @@ Codex 发给 MCP server：
 
 #### 4.10.2 当前实现违反哪些契约？
 
-当前 Codex MCP adapter 没有在模型上下文中忠实投影 `content[0].text`。在 `McpToolOutput` 路径中，模型可见输出会优先使用 `structuredContent`，或把 `content` 数组序列化为 JSON，并添加 wall-time header。当前 Codex MCP adapter 也没有把 exact `freeform: string` MCP tool 映射为 Responses custom/freeform tool。
+当前 Codex MCP adapter 没有在模型上下文中忠实投影 `content[0].text`。在 `McpToolOutput` 路径中，模型可见输出会优先使用 `structuredContent`，或把 `content` 数组序列化为 JSON，并添加 wall-time header。当前 Codex MCP adapter 也没有把唯一 required `freeform: string` MCP tool 映射为 Responses custom/freeform tool。
 
 #### 4.10.3 技术限制是真实约束还是偶然限制？
 
@@ -488,7 +488,7 @@ MCP JSON-RPC 是真实约束。MCP server 收到 arguments object 是真实约�
 
 - `codex-rs/config/src/mcp_types.rs`：在 `RawMcpServerConfig` 和 `McpServerConfig` 增加 `model_content_only: bool` 与 `mcp_freeform: bool`，默认 `false`，并在 `TryFrom<RawMcpServerConfig>` 中显式传递。
 - `codex-rs/core/config.schema.json` 的生成输入：使两个字段出现在 `[mcp_servers.<name>]` schema 中。
-- `codex-rs/tools/src`：增加 freeform schema recognizer。recognizer 接收已解析的 `JsonSchema`，只接受 object schema、唯一 property `freeform`、该 property 为 string、`required` 精确等于 `["freeform"]`、`additionalProperties` 精确为 `false`。
+- `codex-rs/tools/src`：增加 freeform schema recognizer。recognizer 接收 MCP input schema，只接受 object schema、唯一 property `freeform`、该 property 为 string、`required` 精确等于 `["freeform"]`。Schema annotation 和字段 annotation 不改变匹配结果；显式允许额外字段或用非文本约束收窄 `freeform` 时不匹配。
 - `codex-rs/tools/src/tool_registry_plan.rs`：直接暴露 MCP tools 时，若所属 server 开启 `mcp_freeform` 且 schema 匹配，则生成 `ToolSpec::Freeform`，tool name 使用 canonical display name，并注册 MCP handler。未匹配工具仍生成 function tool。
 - `codex-rs/core/src/tools/router.rs`：在 `ResponseItem::CustomToolCall` 分支先尝试用 custom tool name 解析 MCP freeform `ToolInfo`。命中时生成 `ToolPayload::Mcp { raw_arguments: {"freeform": input} }`；未命中时保持普通 custom tool 行为。
 - `codex-rs/core/src/tools/context.rs`：`McpToolOutput::to_response_item()` 在 server 开启 `model_content_only` 时返回只含 `content[0].text` 的 model output，不添加 wall-time header，不序列化 `structuredContent`，不序列化 `content` wrapper。日志、hook、code-mode result 仍保留完整 result。
@@ -524,7 +524,7 @@ MCP JSON-RPC 是真实约束。MCP server 收到 arguments object 是真实约�
 Acceptance tests 应先表达外部可观察行为，再允许内部单元测试补足 recognizer 和 config 细节：
 
 - Config acceptance：`[mcp_servers.docutouch] model_content_only = true` 与 `mcp_freeform = true` 能成功反序列化，默认值为 `false`，schema 包含两个字段，未知拼写仍被拒绝。
-- Tool declaration acceptance：direct MCP tool 的 input schema 精确为唯一 required `freeform: string` 且 server 开启 `mcp_freeform` 时，Responses request 的 `tools` 中出现 `type: "custom"` 工具；同 server 中非 exact schema 工具仍是 function tool。
+- Tool declaration acceptance：direct MCP tool 的 input schema 表达唯一 required `freeform: string` 且 server 开启 `mcp_freeform` 时，Responses request 的 `tools` 中出现 `type: "custom"` 工具；同 server 中非 freeform schema 工具仍是 function tool。
 - Custom call routing acceptance：模型发出该 custom tool call 后，MCP server 收到 `arguments = { "freeform": raw_input }`，而不是 raw string，也不是 `{ "input": raw_input }`。
 - Content-only output acceptance：server 返回 `{ content: [{ type: "text", text: "abc" }], structuredContent: { x: 1 }, isError: false }` 且开启 `model_content_only` 时，下一轮 Responses input 中对应 tool output 的文本为 `abc`，不包含 `structuredContent`、`content`、`isError`、`Wall time` 或 `Output:`。
 - Error text acceptance：server 返回 `isError: true` 且 `content[0].text = "failed"` 时，模型可见输出为 `failed`，host-side result 仍保留 `isError: true`。
@@ -534,7 +534,7 @@ Acceptance tests 应先表达外部可观察行为，再允许内部单元测试
 #### 4.11.3.2 推荐单元测试位置
 
 - `codex-rs/config/src/mcp_types_tests.rs`：新增字段反序列化、默认值和 unknown-field 拒绝测试。
-- `codex-rs/tools/src/mcp_tool_tests.rs` 或新文件：测试 exact freeform recognizer，覆盖 required 顺序、额外字段、nullable string、missing `additionalProperties`、`additionalProperties: true`。
+- `codex-rs/tools/src/mcp_tool_tests.rs` 或新文件：测试 freeform recognizer，覆盖 schema annotation、字段 annotation、required 顺序、额外字段、nullable string、missing `additionalProperties`、`additionalProperties: true`。
 - `codex-rs/tools/src/tool_registry_plan_tests.rs`：测试 opt-in server 的 freeform MCP tool 声明为 `ToolSpec::Freeform`，普通 MCP tool 仍为 function。
 - `codex-rs/core/src/tools/router_tests.rs`：测试 `ResponseItem::CustomToolCall` 能路由到 MCP payload，并正确包装 raw input。
 - `codex-rs/core/src/tools/context_tests.rs`：测试 `McpToolOutput` 的 content-only response item 不带 wall-time header，不使用 structured content，不丢失 code-mode raw result。
@@ -650,12 +650,11 @@ model_visible_output = call_tool_result.content[0].text
       "type": "string"
     }
   },
-  "required": ["freeform"],
-  "additionalProperties": false
+  "required": ["freeform"]
 }
 ```
 
-匹配该 schema 的工具在 `mcp_freeform = true` 时暴露为 Responses custom/freeform tool。
+匹配该输入形状的工具在 `mcp_freeform = true` 时暴露为 Responses custom/freeform tool。该形状的判定对象是输入语义，而不是 schema 文本字面量。Schema-level annotation 和 `freeform` 字段上的 `description` / `title` 不改变输入语义；`freeform.description` 应合并进 Responses custom tool description。显式允许额外输入字段、增加第二个 property、把 `freeform` 改为非 string 或用非文本约束收窄 `freeform` 的 schema 不匹配该 contract。
 
 ### 5.4 执行映射
 

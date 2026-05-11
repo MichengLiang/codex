@@ -2373,11 +2373,15 @@ fn direct_mcp_freeform_tool_is_exposed_as_top_level_freeform_tool_when_opted_in(
         "Apply a patch",
         json!({
             "type": "object",
+            "description": "Schema annotation",
             "properties": {
-                "freeform": { "type": "string" }
+                "freeform": {
+                    "type": "string",
+                    "title": "Patch text",
+                    "description": "Raw patch program text."
+                }
             },
-            "required": ["freeform"],
-            "additionalProperties": false
+            "required": ["freeform"]
         }),
     );
     let echo_tool = mcp_tool(
@@ -2417,7 +2421,10 @@ fn direct_mcp_freeform_tool_is_exposed_as_top_level_freeform_tool_when_opted_in(
         panic!("expected top-level freeform tool");
     };
     assert_eq!(name, "mcp__sample__apply_patch");
-    assert_eq!(description, "Apply a patch");
+    assert_eq!(
+        description,
+        "Apply a patch\n\nInput:\nRaw patch program text."
+    );
 
     let echo_tool = find_namespace_function_tool(&tools, "mcp__sample__", "echo");
     assert_eq!(echo_tool.name, "echo");

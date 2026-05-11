@@ -94,9 +94,9 @@ pub fn is_exact_freeform_schema(schema: &JsonSchema) -> bool {
         return false;
     }
 
-    matches!(
+    !matches!(
         schema.additional_properties,
-        Some(AdditionalProperties::Boolean(false))
+        Some(AdditionalProperties::Boolean(true) | AdditionalProperties::Schema(_))
     )
 }
 
@@ -109,18 +109,20 @@ fn is_exact_freeform_input_schema_value(schema: &JsonValue) -> bool {
     let Some(schema) = schema.as_object() else {
         return false;
     };
-    if schema.len() != 4 {
-        return false;
-    }
     if schema.get("type").and_then(JsonValue::as_str) != Some("object") {
         return false;
     }
-    if schema
-        .get("additionalProperties")
-        .and_then(JsonValue::as_bool)
-        != Some(false)
-    {
+    if !schema.keys().all(|key| {
+        matches!(
+            key.as_str(),
+            "type" | "properties" | "required" | "additionalProperties" | "description" | "title"
+        )
+    }) {
         return false;
+    }
+    match schema.get("additionalProperties") {
+        None | Some(JsonValue::Bool(false)) => {}
+        Some(_) => return false,
     }
     let Some(required) = schema.get("required").and_then(JsonValue::as_array) else {
         return false;
@@ -138,7 +140,10 @@ fn is_exact_freeform_input_schema_value(schema: &JsonValue) -> bool {
     let Some(freeform) = properties.get("freeform").and_then(JsonValue::as_object) else {
         return false;
     };
-    freeform.len() == 1 && freeform.get("type").and_then(JsonValue::as_str) == Some("string")
+    freeform.get("type").and_then(JsonValue::as_str) == Some("string")
+        && freeform
+            .keys()
+            .all(|key| matches!(key.as_str(), "type" | "description" | "title"))
 }
 
 pub fn mcp_tool_to_freeform_tool(
@@ -146,9 +151,26 @@ pub fn mcp_tool_to_freeform_tool(
     tool: &rmcp::model::Tool,
 ) -> Result<FreeformTool, serde_json::Error> {
     let definition = parse_mcp_tool(tool)?;
+    let schema = JsonValue::Object(tool.input_schema.as_ref().clone());
+    let property_description = schema
+        .get("properties")
+        .and_then(JsonValue::as_object)
+        .and_then(|properties| properties.get("freeform"))
+        .and_then(JsonValue::as_object)
+        .and_then(|freeform| freeform.get("description"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|description| !description.is_empty());
+    let description = match (definition.description.trim(), property_description) {
+        ("", Some(property_description)) => format!("Input:\n{property_description}"),
+        (tool_description, Some(property_description)) => {
+            format!("{tool_description}\n\nInput:\n{property_description}")
+        }
+        (tool_description, None) => tool_description.to_string(),
+    };
     Ok(FreeformTool {
         name: tool_name.display(),
-        description: definition.description,
+        description,
         format: FreeformToolFormat {
             r#type: "text".to_string(),
             syntax: String::new(),

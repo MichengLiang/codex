@@ -185,7 +185,7 @@ fn exact_freeform_schema_rejects_missing_required() {
 }
 
 #[test]
-fn exact_freeform_schema_rejects_missing_additional_properties_false() {
+fn exact_freeform_schema_accepts_missing_additional_properties() {
     let schema = JsonSchema::object(
         BTreeMap::from([(
             "freeform".to_string(),
@@ -195,7 +195,7 @@ fn exact_freeform_schema_rejects_missing_additional_properties_false() {
         /*additional_properties*/ None,
     );
 
-    assert!(!is_exact_freeform_schema(&schema));
+    assert!(is_exact_freeform_schema(&schema));
 }
 
 #[test]
@@ -224,6 +224,28 @@ fn exact_freeform_input_schema_accepts_contract_shape() {
             },
             "required": ["freeform"],
             "additionalProperties": false
+        }),
+    );
+
+    assert!(is_exact_freeform_input_schema(&tool));
+}
+
+#[test]
+fn exact_freeform_input_schema_accepts_schema_annotations() {
+    let tool = mcp_tool(
+        "freeform",
+        "Annotated freeform input",
+        serde_json::json!({
+            "type": "object",
+            "description": "Schema-level annotation",
+            "properties": {
+                "freeform": {
+                    "type": "string",
+                    "title": "Freeform text",
+                    "description": "Raw input text."
+                }
+            },
+            "required": ["freeform"]
         }),
     );
 
@@ -262,6 +284,39 @@ fn mcp_freeform_text_tool_serializes_to_official_text_format() {
 }
 
 #[test]
+fn mcp_freeform_text_tool_merges_tool_and_input_descriptions() {
+    let tool = mcp_tool(
+        "freeform",
+        "Run raw source text.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "freeform": {
+                    "type": "string",
+                    "description": "The source text to run."
+                }
+            },
+            "required": ["freeform"]
+        }),
+    );
+
+    let freeform_tool =
+        mcp_tool_to_freeform_tool(&ToolName::namespaced("mcp__sample__", "freeform"), &tool)
+            .expect("convert MCP freeform tool");
+
+    assert_eq!(
+        serde_json::to_value(freeform_tool).expect("serialize freeform tool"),
+        serde_json::json!({
+            "name": "mcp__sample__freeform",
+            "description": "Run raw source text.\n\nInput:\nThe source text to run.",
+            "format": {
+                "type": "text"
+            }
+        })
+    );
+}
+
+#[test]
 fn exact_freeform_input_schema_rejects_string_constraints() {
     let tool = mcp_tool(
         "freeform",
@@ -283,18 +338,17 @@ fn exact_freeform_input_schema_rejects_string_constraints() {
 }
 
 #[test]
-fn exact_freeform_input_schema_rejects_top_level_extra_keywords() {
+fn exact_freeform_input_schema_rejects_additional_properties_true() {
     let tool = mcp_tool(
         "freeform",
-        "Annotated freeform input",
+        "Allows extra input fields",
         serde_json::json!({
             "type": "object",
-            "description": "extra schema annotation",
             "properties": {
                 "freeform": { "type": "string" }
             },
             "required": ["freeform"],
-            "additionalProperties": false
+            "additionalProperties": true
         }),
     );
 

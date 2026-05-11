@@ -62,7 +62,7 @@ The host-side result remains the full MCP result. Codex JSON events, traces, hoo
 
 ### MCP Freeform Tool Exposure
 
-When `mcp_freeform = true` for an MCP server, a directly exposed MCP tool is converted to a Responses custom/freeform tool only when its input schema is exactly:
+When `mcp_freeform = true` for an MCP server, a directly exposed MCP tool is converted to a Responses custom/freeform tool only when its input schema describes a single required string field named `freeform`:
 
 ```json
 {
@@ -72,10 +72,11 @@ When `mcp_freeform = true` for an MCP server, a directly exposed MCP tool is con
       "type": "string"
     }
   },
-  "required": ["freeform"],
-  "additionalProperties": false
+  "required": ["freeform"]
 }
 ```
+
+Schema-level annotations and `freeform` property annotations such as `description` and `title` do not change the input shape. A `freeform.description` value is appended to the Responses custom tool description because custom tools do not expose parameter schemas to the model. Schemas that add a second input property, make `freeform` non-string, constrain it with non-text JSON Schema keywords, or explicitly allow additional properties are not recognized as freeform tools.
 
 The Responses custom tool name is the MCP canonical display name, for example:
 
@@ -166,9 +167,9 @@ Captured request bodies were preserved under:
 tmp/mcp-text-contract-blackbox/raw-requests-content-only/
 ```
 
-### Freeform Evidence
+### Strict Freeform Evidence
 
-The tiny MCP server exposed an exact freeform schema:
+The tiny MCP server exposed a strict freeform schema that remains inside the accepted freeform input shape:
 
 ```json
 {
