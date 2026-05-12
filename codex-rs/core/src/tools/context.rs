@@ -58,25 +58,10 @@ pub struct ToolInvocation {
 
 #[derive(Clone, Debug)]
 pub enum ToolPayload {
-    Function {
-        arguments: String,
-    },
-    ToolSearch {
-        arguments: SearchToolCallParams,
-    },
-    Custom {
-        input: String,
-    },
-    LocalShell {
-        params: ShellToolCallParams,
-    },
-    Mcp {
-        server: String,
-        tool: String,
-        raw_arguments: String,
-        model_content_only: bool,
-        is_freeform: bool,
-    },
+    Function { arguments: String },
+    ToolSearch { arguments: SearchToolCallParams },
+    Custom { input: String },
+    LocalShell { params: ShellToolCallParams },
 }
 
 impl ToolPayload {
@@ -86,7 +71,6 @@ impl ToolPayload {
             ToolPayload::ToolSearch { arguments } => Cow::Owned(arguments.query.clone()),
             ToolPayload::Custom { input } => Cow::Borrowed(input),
             ToolPayload::LocalShell { params } => Cow::Owned(params.command.join(" ")),
-            ToolPayload::Mcp { raw_arguments, .. } => Cow::Borrowed(raw_arguments),
         }
     }
 }
@@ -146,17 +130,13 @@ pub struct McpToolOutput {
     pub wall_time: Duration,
     pub original_image_detail_supported: bool,
     pub truncation_policy: TruncationPolicy,
+    pub model_content_only: bool,
+    pub is_freeform: bool,
 }
 
 impl ToolOutput for McpToolOutput {
     fn log_preview(&self) -> String {
-        let payload = self.response_payload(&ToolPayload::Mcp {
-            server: String::new(),
-            tool: String::new(),
-            raw_arguments: String::new(),
-            model_content_only: false,
-            is_freeform: false,
-        });
+        let payload = self.response_payload();
         let preview = payload.body.to_text().unwrap_or_else(|| {
             serde_json::to_string(&self.result.content)
                 .unwrap_or_else(|err| format!("failed to serialize mcp result: {err}"))
@@ -168,20 +148,18 @@ impl ToolOutput for McpToolOutput {
         self.result.success()
     }
 
-    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
-        let output = self.response_payload(payload);
-        match payload {
-            ToolPayload::Mcp {
-                is_freeform: true, ..
-            } => ResponseInputItem::CustomToolCallOutput {
+    fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
+        if self.is_freeform {
+            ResponseInputItem::CustomToolCallOutput {
                 call_id: call_id.to_string(),
                 name: None,
-                output,
-            },
-            _ => ResponseInputItem::FunctionCallOutput {
+                output: self.response_payload(),
+            }
+        } else {
+            ResponseInputItem::FunctionCallOutput {
                 call_id: call_id.to_string(),
-                output,
-            },
+                output: self.response_payload(),
+            }
         }
     }
 
@@ -197,12 +175,8 @@ impl ToolOutput for McpToolOutput {
 }
 
 impl McpToolOutput {
-    fn response_payload(&self, payload: &ToolPayload) -> FunctionCallOutputPayload {
-        if let ToolPayload::Mcp {
-            model_content_only: true,
-            ..
-        } = payload
-        {
+    fn response_payload(&self) -> FunctionCallOutputPayload {
+        if self.model_content_only {
             let text = self
                 .result
                 .content
@@ -403,10 +377,6 @@ impl ToolOutput for AbortedToolOutput {
                 execution: "client".to_string(),
                 tools: Vec::new(),
             },
-            ToolPayload::Mcp { .. } => ResponseInputItem::McpToolCallOutput {
-                call_id: call_id.to_string(),
-                output: CallToolResult::from_error_text(self.message.clone()),
-            },
             _ => function_tool_response(
                 call_id,
                 payload,
@@ -555,12 +525,8 @@ pub(crate) fn response_input_to_code_mode_result(response: ResponseInputItem) ->
         },
         ResponseInputItem::ToolSearchOutput { tools, .. } => JsonValue::Array(tools),
         ResponseInputItem::McpToolCallOutput { output, .. } => {
-            output.code_mode_result(&ToolPayload::Mcp {
-                server: String::new(),
-                tool: String::new(),
-                raw_arguments: String::new(),
-                model_content_only: false,
-                is_freeform: false,
+            output.code_mode_result(&ToolPayload::Function {
+                arguments: String::new(),
             })
         }
     }
@@ -601,20 +567,6 @@ fn function_tool_response(
     };
 
     if matches!(payload, ToolPayload::Custom { .. }) {
-        return ResponseInputItem::CustomToolCallOutput {
-            call_id: call_id.to_string(),
-            name: None,
-            output: FunctionCallOutputPayload { body, success },
-        };
-    }
-
-    if matches!(
-        payload,
-        ToolPayload::Mcp {
-            is_freeform: true,
-            ..
-        }
-    ) {
         return ResponseInputItem::CustomToolCallOutput {
             call_id: call_id.to_string(),
             name: None,

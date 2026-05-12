@@ -459,6 +459,7 @@ impl ServerHandler for TestToolServer {
         )]));
 
         ServerInfo {
+            instructions: Some("Use these tools to exercise the rmcp test server.".to_string()),
             capabilities,
             ..ServerInfo::default()
         }

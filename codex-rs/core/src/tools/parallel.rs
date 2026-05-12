@@ -53,10 +53,6 @@ impl ToolCallRuntime {
         self.router.find_spec(tool_name)
     }
 
-    pub(crate) fn router(&self) -> &ToolRouter {
-        self.router.as_ref()
-    }
-
     pub(crate) fn create_diff_consumer(
         &self,
         tool_name: &codex_tools::ToolName,
@@ -98,12 +94,11 @@ impl ToolCallRuntime {
         let lock = Arc::clone(&self.parallel_execution);
         let invocation_cancellation_token = cancellation_token.clone();
         let started = Instant::now();
-        let display_name = call.tool_name.display();
 
         let dispatch_span = trace_span!(
             "dispatch_tool_call_with_code_mode_result",
-            otel.name = display_name.as_str(),
-            tool_name = display_name.as_str(),
+            otel.name = %call.tool_name,
+            tool_name = %call.tool_name,
             call_id = call.call_id.as_str(),
             aborted = false,
         );
@@ -158,16 +153,6 @@ impl ToolCallRuntime {
                 tools: Vec::new(),
             },
             ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
-                call_id: call.call_id,
-                name: None,
-                output: codex_protocol::models::FunctionCallOutputPayload {
-                    body: codex_protocol::models::FunctionCallOutputBody::Text(message),
-                    success: Some(false),
-                },
-            },
-            ToolPayload::Mcp {
-                is_freeform: true, ..
-            } => ResponseInputItem::CustomToolCallOutput {
                 call_id: call.call_id,
                 name: None,
                 output: codex_protocol::models::FunctionCallOutputPayload {

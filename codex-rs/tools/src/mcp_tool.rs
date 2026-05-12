@@ -169,7 +169,7 @@ pub fn mcp_tool_to_freeform_tool(
         (tool_description, None) => tool_description.to_string(),
     };
     Ok(FreeformTool {
-        name: tool_name.display(),
+        name: tool_name.to_string(),
         description,
         format: FreeformToolFormat {
             r#type: "text".to_string(),

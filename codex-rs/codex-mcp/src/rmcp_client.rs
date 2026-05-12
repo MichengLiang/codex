@@ -30,6 +30,8 @@ use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::runtime::McpRuntimeEnvironment;
 use crate::runtime::emit_duration;
+use crate::server::EffectiveMcpServer;
+use crate::server::McpServerLaunch;
 use crate::tools::ToolFilter;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
@@ -124,8 +126,6 @@ pub(crate) struct AsyncManagedClient {
     pub(crate) startup_snapshot: Option<Vec<ToolInfo>>,
     pub(crate) startup_complete: Arc<AtomicBool>,
     pub(crate) tool_plugin_provenance: Arc<ToolPluginProvenance>,
-    pub(crate) model_content_only: bool,
-    pub(crate) mcp_freeform: bool,
     pub(crate) cancel_token: CancellationToken,
 }
 
@@ -135,7 +135,7 @@ impl AsyncManagedClient {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         server_name: String,
-        config: McpServerConfig,
+        server: EffectiveMcpServer,
         store_mode: OAuthCredentialsStoreMode,
         cancel_token: CancellationToken,
         tx_event: Sender<Event>,
@@ -144,8 +144,12 @@ impl AsyncManagedClient {
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
         runtime_environment: McpRuntimeEnvironment,
         runtime_auth_provider: Option<SharedAuthProvider>,
+        client_elicitation_capability: ElicitationCapability,
     ) -> Self {
-        let tool_filter = ToolFilter::from_config(&config);
+        let tool_filter = server
+            .configured_config()
+            .map(ToolFilter::from_config)
+            .unwrap_or_default();
         let startup_snapshot = load_startup_cached_codex_apps_tools_snapshot(
             &server_name,
             codex_apps_tools_cache_context.as_ref(),
@@ -155,8 +159,6 @@ impl AsyncManagedClient {
         let startup_complete = Arc::new(AtomicBool::new(false));
         let startup_complete_for_fut = Arc::clone(&startup_complete);
         let cancel_token_for_fut = cancel_token.clone();
-        let model_content_only = config.model_content_only;
-        let mcp_freeform = config.mcp_freeform;
         let fut = async move {
             let outcome = match async {
                 if let Err(error) = validate_mcp_server_name(&server_name) {
@@ -166,7 +168,7 @@ impl AsyncManagedClient {
                 let client = Arc::new(
                     make_rmcp_client(
                         &server_name,
-                        config.clone(),
+                        server.clone(),
                         store_mode,
                         runtime_environment,
                         runtime_auth_provider,
@@ -177,14 +179,19 @@ impl AsyncManagedClient {
                     server_name,
                     client,
                     StartServerTaskParams {
-                        startup_timeout: config
-                            .startup_timeout_sec
+                        startup_timeout: server
+                            .configured_config()
+                            .and_then(|config| config.startup_timeout_sec)
                             .or(Some(DEFAULT_STARTUP_TIMEOUT)),
-                        tool_timeout: config.tool_timeout_sec.unwrap_or(DEFAULT_TOOL_TIMEOUT),
+                        tool_timeout: server
+                            .configured_config()
+                            .and_then(|config| config.tool_timeout_sec)
+                            .unwrap_or(DEFAULT_TOOL_TIMEOUT),
                         tool_filter: startup_tool_filter,
                         tx_event,
                         elicitation_requests,
                         codex_apps_tools_cache_context,
+                        client_elicitation_capability,
                     },
                 )
                 .await
@@ -212,8 +219,6 @@ impl AsyncManagedClient {
             startup_snapshot,
             startup_complete,
             tool_plugin_provenance,
-            model_content_only,
-            mcp_freeform,
             cancel_token,
         }
     }
@@ -244,8 +249,6 @@ impl AsyncManagedClient {
         let annotate_tools = |tools: Vec<ToolInfo>| {
             let mut tools = tools;
             for tool in &mut tools {
-                tool.model_content_only = self.model_content_only;
-                tool.mcp_freeform = self.mcp_freeform;
                 if tool.server_name == CODEX_APPS_MCP_SERVER_NAME {
                     tool.tool = tool_with_model_visible_input_schema(&tool.tool);
                 }
@@ -325,14 +328,6 @@ impl From<anyhow::Error> for StartupOutcomeError {
     }
 }
 
-pub(crate) fn elicitation_capability_for_server(
-    _server_name: &str,
-) -> Option<ElicitationCapability> {
-    // https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#capabilities
-    // indicates this should be an empty object.
-    Some(ElicitationCapability::default())
-}
-
 pub(crate) async fn list_tools_for_client_uncached(
     server_name: &str,
     client: &Arc<RmcpClient>,
@@ -370,18 +365,27 @@ pub(crate) async fn list_tools_for_client_uncached(
                     tool_def.title = Some(normalized_title);
                 }
             }
+            let has_connector_metadata = connector_id.is_some()
+                || connector_name.is_some()
+                || connector_description.is_some();
+            let namespace_description = if has_connector_metadata {
+                connector_description
+            } else {
+                server_instructions.map(str::to_string)
+            };
             ToolInfo {
                 server_name: server_name.to_owned(),
-                callable_name,
-                callable_namespace,
-                server_instructions: server_instructions.map(str::to_string),
+                supports_parallel_tool_calls: false,
                 model_content_only: false,
                 mcp_freeform: false,
+                server_origin: None,
+                callable_name,
+                callable_namespace,
+                namespace_description,
                 tool: tool_def,
                 connector_id,
                 connector_name,
                 plugin_display_names: Vec::new(),
-                connector_description,
             }
         })
         .collect();
@@ -466,8 +470,8 @@ async fn start_server_task(
         tx_event,
         elicitation_requests,
         codex_apps_tools_cache_context,
+        client_elicitation_capability,
     } = params;
-    let elicitation = elicitation_capability_for_server(&server_name);
     let params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
@@ -475,7 +479,7 @@ async fn start_server_task(
             extensions: None,
             roots: None,
             sampling: None,
-            elicitation,
+            elicitation: Some(client_elicitation_capability),
             tasks: None,
         },
         client_info: Implementation {
@@ -551,15 +555,19 @@ struct StartServerTaskParams {
     tx_event: Sender<Event>,
     elicitation_requests: ElicitationRequestManager,
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
+    client_elicitation_capability: ElicitationCapability,
 }
 
 async fn make_rmcp_client(
     server_name: &str,
-    config: McpServerConfig,
+    server: EffectiveMcpServer,
     store_mode: OAuthCredentialsStoreMode,
     runtime_environment: McpRuntimeEnvironment,
     runtime_auth_provider: Option<SharedAuthProvider>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
+    let config = match server.launch() {
+        McpServerLaunch::Configured(config) => config.as_ref().clone(),
+    };
     let McpServerConfig {
         transport,
         experimental_environment,
