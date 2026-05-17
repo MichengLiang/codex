@@ -15,6 +15,7 @@ pub const TOOL_LOCAL_SHELL_ID: &str = "builtin.tool.local_shell";
 pub const TOOL_APPLY_PATCH_ID: &str = "builtin.tool.apply_patch";
 pub const TOOL_UPDATE_PLAN_ID: &str = "builtin.tool.update_plan";
 pub const TOOL_REQUEST_USER_INPUT_ID: &str = "builtin.tool.request_user_input";
+pub const TOOL_REQUEST_PERMISSIONS_ID: &str = "builtin.tool.request_permissions";
 pub const TOOL_LIST_MCP_RESOURCES_ID: &str = "builtin.tool.list_mcp_resources";
 pub const TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID: &str = "builtin.tool.list_mcp_resource_templates";
 pub const TOOL_READ_MCP_RESOURCE_ID: &str = "builtin.tool.read_mcp_resource";
@@ -23,9 +24,14 @@ pub const TOOL_CREATE_GOAL_ID: &str = "builtin.tool.create_goal";
 pub const TOOL_UPDATE_GOAL_ID: &str = "builtin.tool.update_goal";
 pub const TOOL_SPAWN_AGENT_ID: &str = "builtin.tool.spawn_agent";
 pub const TOOL_SEND_INPUT_ID: &str = "builtin.tool.send_input";
+pub const TOOL_SEND_MESSAGE_ID: &str = "builtin.tool.send_message";
+pub const TOOL_FOLLOWUP_TASK_ID: &str = "builtin.tool.followup_task";
 pub const TOOL_RESUME_AGENT_ID: &str = "builtin.tool.resume_agent";
 pub const TOOL_WAIT_AGENT_ID: &str = "builtin.tool.wait_agent";
 pub const TOOL_CLOSE_AGENT_ID: &str = "builtin.tool.close_agent";
+pub const TOOL_LIST_AGENTS_ID: &str = "builtin.tool.list_agents";
+pub const TOOL_SPAWN_AGENTS_ON_CSV_ID: &str = "builtin.tool.spawn_agents_on_csv";
+pub const TOOL_REPORT_AGENT_JOB_RESULT_ID: &str = "builtin.tool.report_agent_job_result";
 pub const TOOL_VIEW_IMAGE_ID: &str = "builtin.tool.view_image";
 pub const TOOL_WEB_SEARCH_ID: &str = "builtin.tool.web_search";
 pub const TOOL_IMAGE_GENERATION_ID: &str = "builtin.tool.image_generation";
@@ -51,6 +57,7 @@ const KNOWN_TOOL_IDS: &[&str] = &[
     TOOL_APPLY_PATCH_ID,
     TOOL_UPDATE_PLAN_ID,
     TOOL_REQUEST_USER_INPUT_ID,
+    TOOL_REQUEST_PERMISSIONS_ID,
     TOOL_LIST_MCP_RESOURCES_ID,
     TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID,
     TOOL_READ_MCP_RESOURCE_ID,
@@ -59,9 +66,14 @@ const KNOWN_TOOL_IDS: &[&str] = &[
     TOOL_UPDATE_GOAL_ID,
     TOOL_SPAWN_AGENT_ID,
     TOOL_SEND_INPUT_ID,
+    TOOL_SEND_MESSAGE_ID,
+    TOOL_FOLLOWUP_TASK_ID,
     TOOL_RESUME_AGENT_ID,
     TOOL_WAIT_AGENT_ID,
     TOOL_CLOSE_AGENT_ID,
+    TOOL_LIST_AGENTS_ID,
+    TOOL_SPAWN_AGENTS_ON_CSV_ID,
+    TOOL_REPORT_AGENT_JOB_RESULT_ID,
     TOOL_VIEW_IMAGE_ID,
     TOOL_WEB_SEARCH_ID,
     TOOL_IMAGE_GENERATION_ID,

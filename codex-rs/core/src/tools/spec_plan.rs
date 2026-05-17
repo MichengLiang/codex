@@ -49,6 +49,32 @@ use crate::tools::registry::ToolRegistryBuilder;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use crate::tools::spec_plan_types::agent_type_description;
 use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
+use codex_config::builtin_context_lock::TOOL_CLOSE_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_CREATE_GOAL_ID;
+use codex_config::builtin_context_lock::TOOL_EXEC_COMMAND_ID;
+use codex_config::builtin_context_lock::TOOL_FOLLOWUP_TASK_ID;
+use codex_config::builtin_context_lock::TOOL_GET_GOAL_ID;
+use codex_config::builtin_context_lock::TOOL_IMAGE_GENERATION_ID;
+use codex_config::builtin_context_lock::TOOL_LIST_AGENTS_ID;
+use codex_config::builtin_context_lock::TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID;
+use codex_config::builtin_context_lock::TOOL_LIST_MCP_RESOURCES_ID;
+use codex_config::builtin_context_lock::TOOL_LOCAL_SHELL_ID;
+use codex_config::builtin_context_lock::TOOL_READ_MCP_RESOURCE_ID;
+use codex_config::builtin_context_lock::TOOL_REPORT_AGENT_JOB_RESULT_ID;
+use codex_config::builtin_context_lock::TOOL_REQUEST_PERMISSIONS_ID;
+use codex_config::builtin_context_lock::TOOL_REQUEST_USER_INPUT_ID;
+use codex_config::builtin_context_lock::TOOL_RESUME_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_SEND_INPUT_ID;
+use codex_config::builtin_context_lock::TOOL_SEND_MESSAGE_ID;
+use codex_config::builtin_context_lock::TOOL_SHELL_ID;
+use codex_config::builtin_context_lock::TOOL_SPAWN_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_SPAWN_AGENTS_ON_CSV_ID;
+use codex_config::builtin_context_lock::TOOL_UPDATE_GOAL_ID;
+use codex_config::builtin_context_lock::TOOL_UPDATE_PLAN_ID;
+use codex_config::builtin_context_lock::TOOL_VIEW_IMAGE_ID;
+use codex_config::builtin_context_lock::TOOL_WAIT_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_WEB_SEARCH_ID;
+use codex_config::builtin_context_lock::TOOL_WRITE_STDIN_ID;
 use codex_mcp::ToolInfo;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_tools::BuiltinContextLockToolEntry;
@@ -116,6 +142,53 @@ impl<'a> BuiltinToolLock<'a> {
         }
     }
 
+    fn register_compat_handler<H>(
+        &self,
+        builder: &mut ToolRegistryBuilder,
+        builtin_id: &str,
+        handler: Arc<H>,
+    ) where
+        H: ToolHandler + 'static,
+    {
+        let Some(entry) = self.tool_entry(builtin_id) else {
+            builder.register_handler(handler);
+            return;
+        };
+
+        if !entry.enabled {
+            return;
+        }
+
+        builder.register_handler(handler);
+    }
+
+    fn push_spec(
+        &self,
+        builder: &mut ToolRegistryBuilder,
+        builtin_id: &str,
+        default_spec: ToolSpec,
+    ) {
+        let Some(entry) = self.tool_entry(builtin_id) else {
+            builder.push_spec(default_spec);
+            return;
+        };
+
+        if !entry.enabled {
+            return;
+        }
+
+        let spec = match entry.spec.as_ref() {
+            Some(spec) => serde_json::from_value::<ToolSpec>(spec.clone()).unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse builtin context lock spec for id `{builtin_id}` as tool spec: {err}"
+                )
+            }),
+            None => default_spec,
+        };
+        validate_locked_spec_name(builtin_id, entry.name.as_deref(), &spec);
+        builder.push_spec(spec);
+    }
+
     fn tool_entry(&self, builtin_id: &str) -> Option<&'a BuiltinContextLockToolEntry> {
         self.lock?.tools.iter().find(|entry| entry.id == builtin_id)
     }
@@ -130,12 +203,27 @@ fn validate_locked_tool_name(
     if let Some(locked_name) = locked_name {
         validate_locked_tool_name_text(builtin_id, handler_name, locked_name);
     }
-    validate_locked_tool_name_text(builtin_id, handler_name, spec.name());
+    validate_locked_name_text(builtin_id, handler_name.name.as_str(), spec.name());
 }
 
 fn validate_locked_tool_name_text(builtin_id: &str, handler_name: &ToolName, locked_name: &str) {
     let expected_name = handler_name.name.as_str();
-    if handler_name.namespace.is_some() || locked_name != expected_name {
+    if handler_name.namespace.is_some() {
+        panic!(
+            "builtin context lock id `{builtin_id}` expected non-namespaced tool name `{expected_name}`"
+        );
+    }
+    validate_locked_name_text(builtin_id, expected_name, locked_name);
+}
+
+fn validate_locked_spec_name(builtin_id: &str, locked_name: Option<&str>, spec: &ToolSpec) {
+    if let Some(locked_name) = locked_name {
+        validate_locked_name_text(builtin_id, spec.name(), locked_name);
+    }
+}
+
+fn validate_locked_name_text(builtin_id: &str, expected_name: &str, locked_name: &str) {
+    if locked_name != expected_name {
         panic!(
             "builtin context lock id `{builtin_id}` expected tool name `{expected_name}` but lock payload names `{locked_name}`"
         );
@@ -196,32 +284,48 @@ pub fn build_tool_registry_builder(
             matches!(config.environment_mode, ToolEnvironmentMode::Multiple);
         match &config.shell_type {
             ConfigShellToolType::Default => {
-                builder.register_handler(Arc::new(ShellHandler::new(ShellToolOptions {
-                    exec_permission_approvals_enabled,
-                })));
+                builtin_lock.register_handler(
+                    &mut builder,
+                    TOOL_SHELL_ID,
+                    Arc::new(ShellHandler::new(ShellToolOptions {
+                        exec_permission_approvals_enabled,
+                    })),
+                );
             }
             ConfigShellToolType::Local => {
-                builder.register_handler(Arc::new(LocalShellHandler::new()));
+                builtin_lock.register_handler(
+                    &mut builder,
+                    TOOL_LOCAL_SHELL_ID,
+                    Arc::new(LocalShellHandler::new()),
+                );
             }
             ConfigShellToolType::UnifiedExec => {
-                builder.register_handler(Arc::new(ExecCommandHandler::new(
-                    ExecCommandHandlerOptions {
+                builtin_lock.register_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ExecCommandHandler::new(ExecCommandHandlerOptions {
                         allow_login_shell: config.allow_login_shell,
                         exec_permission_approvals_enabled,
                         include_environment_id,
-                    },
-                )));
-                builder.register_handler(Arc::new(WriteStdinHandler));
+                    })),
+                );
+                builtin_lock.register_handler(
+                    &mut builder,
+                    TOOL_WRITE_STDIN_ID,
+                    Arc::new(WriteStdinHandler),
+                );
             }
             ConfigShellToolType::Disabled => {}
             ConfigShellToolType::ShellCommand => {
-                builder.register_handler(Arc::new(ShellCommandHandler::new(
-                    ShellCommandHandlerOptions {
+                builtin_lock.register_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ShellCommandHandler::new(ShellCommandHandlerOptions {
                         backend_config: config.shell_command_backend,
                         allow_login_shell: config.allow_login_shell,
                         exec_permission_approvals_enabled,
-                    },
-                )));
+                    })),
+                );
             }
         }
     }
@@ -231,55 +335,129 @@ pub fn build_tool_registry_builder(
     {
         match &config.shell_type {
             ConfigShellToolType::Default => {
-                builder.register_handler(Arc::new(ContainerExecHandler));
-                builder.register_handler(Arc::new(LocalShellHandler::default()));
-                builder.register_handler(Arc::new(ShellCommandHandler::from(
-                    config.shell_command_backend,
-                )));
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ContainerExecHandler),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_LOCAL_SHELL_ID,
+                    Arc::new(LocalShellHandler::default()),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ShellCommandHandler::from(config.shell_command_backend)),
+                );
             }
             ConfigShellToolType::Local => {
-                builder.register_handler(Arc::new(ShellHandler::default()));
-                builder.register_handler(Arc::new(ContainerExecHandler));
-                builder.register_handler(Arc::new(ShellCommandHandler::from(
-                    config.shell_command_backend,
-                )));
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_SHELL_ID,
+                    Arc::new(ShellHandler::default()),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ContainerExecHandler),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ShellCommandHandler::from(config.shell_command_backend)),
+                );
             }
             ConfigShellToolType::UnifiedExec => {
-                builder.register_handler(Arc::new(ShellHandler::default()));
-                builder.register_handler(Arc::new(ContainerExecHandler));
-                builder.register_handler(Arc::new(LocalShellHandler::default()));
-                builder.register_handler(Arc::new(ShellCommandHandler::from(
-                    config.shell_command_backend,
-                )));
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_SHELL_ID,
+                    Arc::new(ShellHandler::default()),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ContainerExecHandler),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_LOCAL_SHELL_ID,
+                    Arc::new(LocalShellHandler::default()),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ShellCommandHandler::from(config.shell_command_backend)),
+                );
             }
             ConfigShellToolType::ShellCommand => {
-                builder.register_handler(Arc::new(ShellHandler::default()));
-                builder.register_handler(Arc::new(ContainerExecHandler));
-                builder.register_handler(Arc::new(LocalShellHandler::default()));
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_SHELL_ID,
+                    Arc::new(ShellHandler::default()),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_EXEC_COMMAND_ID,
+                    Arc::new(ContainerExecHandler),
+                );
+                builtin_lock.register_compat_handler(
+                    &mut builder,
+                    TOOL_LOCAL_SHELL_ID,
+                    Arc::new(LocalShellHandler::default()),
+                );
             }
             ConfigShellToolType::Disabled => {}
         }
     }
 
     if params.mcp_tools.is_some() {
-        builder.register_handler(Arc::new(ListMcpResourcesHandler));
-        builder.register_handler(Arc::new(ListMcpResourceTemplatesHandler));
-        builder.register_handler(Arc::new(ReadMcpResourceHandler));
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_LIST_MCP_RESOURCES_ID,
+            Arc::new(ListMcpResourcesHandler),
+        );
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID,
+            Arc::new(ListMcpResourceTemplatesHandler),
+        );
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_READ_MCP_RESOURCE_ID,
+            Arc::new(ReadMcpResourceHandler),
+        );
     }
 
-    builder.register_handler(Arc::new(PlanHandler));
+    builtin_lock.register_handler(&mut builder, TOOL_UPDATE_PLAN_ID, Arc::new(PlanHandler));
     if config.goal_tools {
-        builder.register_handler(Arc::new(GetGoalHandler));
-        builder.register_handler(Arc::new(CreateGoalHandler));
-        builder.register_handler(Arc::new(UpdateGoalHandler));
+        builtin_lock.register_handler(&mut builder, TOOL_GET_GOAL_ID, Arc::new(GetGoalHandler));
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_CREATE_GOAL_ID,
+            Arc::new(CreateGoalHandler),
+        );
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_UPDATE_GOAL_ID,
+            Arc::new(UpdateGoalHandler),
+        );
     }
 
-    builder.register_handler(Arc::new(RequestUserInputHandler {
-        available_modes: config.request_user_input_available_modes.clone(),
-    }));
+    builtin_lock.register_handler(
+        &mut builder,
+        TOOL_REQUEST_USER_INPUT_ID,
+        Arc::new(RequestUserInputHandler {
+            available_modes: config.request_user_input_available_modes.clone(),
+        }),
+    );
 
     if config.request_permissions_tool_enabled {
-        builder.register_handler(Arc::new(RequestPermissionsHandler));
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_REQUEST_PERMISSIONS_ID,
+            Arc::new(RequestPermissionsHandler),
+        );
     }
 
     let deferred_dynamic_tools = params
@@ -353,63 +531,121 @@ pub fn build_tool_registry_builder(
         web_search_config: config.web_search_config.as_ref(),
         web_search_tool_type: config.web_search_tool_type,
     }) {
-        builder.push_spec(web_search_tool);
+        builtin_lock.push_spec(&mut builder, TOOL_WEB_SEARCH_ID, web_search_tool);
     }
 
     if config.image_gen_tool {
-        builder.push_spec(create_image_generation_tool("png"));
+        builtin_lock.push_spec(
+            &mut builder,
+            TOOL_IMAGE_GENERATION_ID,
+            create_image_generation_tool("png"),
+        );
     }
 
     if config.environment_mode.has_environment() {
         let include_environment_id =
             matches!(config.environment_mode, ToolEnvironmentMode::Multiple);
-        builder.register_handler(Arc::new(ViewImageHandler::new(ViewImageToolOptions {
-            can_request_original_image_detail: config.can_request_original_image_detail,
-            include_environment_id,
-        })));
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_VIEW_IMAGE_ID,
+            Arc::new(ViewImageHandler::new(ViewImageToolOptions {
+                can_request_original_image_detail: config.can_request_original_image_detail,
+                include_environment_id,
+            })),
+        );
     }
 
     if config.collab_tools {
         if config.multi_agent_v2 {
             let agent_type_description =
                 agent_type_description(config, params.default_agent_type_description);
-            builder.register_handler(Arc::new(SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
-                available_models: config.available_models.clone(),
-                agent_type_description,
-                hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
-                include_usage_hint: config.spawn_agent_usage_hint,
-                usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
-                max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
-            })));
-            builder.register_handler(Arc::new(SendMessageHandlerV2));
-            builder.register_handler(Arc::new(FollowupTaskHandlerV2));
-            builder.register_handler(Arc::new(WaitAgentHandlerV2::new(
-                params.wait_agent_timeouts,
-            )));
-            builder.register_handler(Arc::new(CloseAgentHandlerV2));
-            builder.register_handler(Arc::new(ListAgentsHandlerV2));
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_SPAWN_AGENT_ID,
+                Arc::new(SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
+                    available_models: config.available_models.clone(),
+                    agent_type_description,
+                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                    include_usage_hint: config.spawn_agent_usage_hint,
+                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
+                    max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
+                })),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_SEND_MESSAGE_ID,
+                Arc::new(SendMessageHandlerV2),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_FOLLOWUP_TASK_ID,
+                Arc::new(FollowupTaskHandlerV2),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_WAIT_AGENT_ID,
+                Arc::new(WaitAgentHandlerV2::new(params.wait_agent_timeouts)),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_CLOSE_AGENT_ID,
+                Arc::new(CloseAgentHandlerV2),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_LIST_AGENTS_ID,
+                Arc::new(ListAgentsHandlerV2),
+            );
         } else {
             let agent_type_description =
                 agent_type_description(config, params.default_agent_type_description);
-            builder.register_handler(Arc::new(SpawnAgentHandler::new(SpawnAgentToolOptions {
-                available_models: config.available_models.clone(),
-                agent_type_description,
-                hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
-                include_usage_hint: config.spawn_agent_usage_hint,
-                usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
-                max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
-            })));
-            builder.register_handler(Arc::new(SendInputHandler));
-            builder.register_handler(Arc::new(ResumeAgentHandler));
-            builder.register_handler(Arc::new(WaitAgentHandler::new(params.wait_agent_timeouts)));
-            builder.register_handler(Arc::new(CloseAgentHandler));
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_SPAWN_AGENT_ID,
+                Arc::new(SpawnAgentHandler::new(SpawnAgentToolOptions {
+                    available_models: config.available_models.clone(),
+                    agent_type_description,
+                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                    include_usage_hint: config.spawn_agent_usage_hint,
+                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
+                    max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
+                })),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_SEND_INPUT_ID,
+                Arc::new(SendInputHandler),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_RESUME_AGENT_ID,
+                Arc::new(ResumeAgentHandler),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_WAIT_AGENT_ID,
+                Arc::new(WaitAgentHandler::new(params.wait_agent_timeouts)),
+            );
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_CLOSE_AGENT_ID,
+                Arc::new(CloseAgentHandler),
+            );
         }
     }
 
     if config.agent_jobs_tools {
-        builder.register_handler(Arc::new(SpawnAgentsOnCsvHandler));
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_SPAWN_AGENTS_ON_CSV_ID,
+            Arc::new(SpawnAgentsOnCsvHandler),
+        );
         if config.agent_jobs_worker_tools {
-            builder.register_handler(Arc::new(ReportAgentJobResultHandler));
+            builtin_lock.register_handler(
+                &mut builder,
+                TOOL_REPORT_AGENT_JOB_RESULT_ID,
+                Arc::new(ReportAgentJobResultHandler),
+            );
         }
     }
 

@@ -30,6 +30,22 @@ use crate::tools::router::ToolRouterParams;
 use crate::tools::spec_plan_types::ToolNamespace;
 use codex_app_server_protocol::AppInfo;
 use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
+use codex_config::builtin_context_lock::TOOL_CLOSE_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_EXEC_COMMAND_ID;
+use codex_config::builtin_context_lock::TOOL_IMAGE_GENERATION_ID;
+use codex_config::builtin_context_lock::TOOL_LOCAL_SHELL_ID;
+use codex_config::builtin_context_lock::TOOL_REPORT_AGENT_JOB_RESULT_ID;
+use codex_config::builtin_context_lock::TOOL_REQUEST_USER_INPUT_ID;
+use codex_config::builtin_context_lock::TOOL_RESUME_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_SEND_INPUT_ID;
+use codex_config::builtin_context_lock::TOOL_SHELL_ID;
+use codex_config::builtin_context_lock::TOOL_SPAWN_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_SPAWN_AGENTS_ON_CSV_ID;
+use codex_config::builtin_context_lock::TOOL_UPDATE_PLAN_ID;
+use codex_config::builtin_context_lock::TOOL_VIEW_IMAGE_ID;
+use codex_config::builtin_context_lock::TOOL_WAIT_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_WEB_SEARCH_ID;
+use codex_config::builtin_context_lock::TOOL_WRITE_STDIN_ID;
 use codex_config::builtin_context_lock::ToolEntry;
 use codex_features::Feature;
 use codex_features::Features;
@@ -290,6 +306,93 @@ fn builtin_context_lock_tool_name_mismatch_errors() {
         /*deferred_mcp_tools*/ None,
         &[],
     );
+}
+
+#[test]
+fn builtin_context_lock_can_hide_all_default_builtin_tool_specs() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_builtin_context_lock(Some(lock_with_disabled_tool_entries(&[
+        TOOL_EXEC_COMMAND_ID,
+        TOOL_WRITE_STDIN_ID,
+        TOOL_SHELL_ID,
+        TOOL_LOCAL_SHELL_ID,
+        TOOL_UPDATE_PLAN_ID,
+        TOOL_REQUEST_USER_INPUT_ID,
+        TOOL_APPLY_PATCH_ID,
+        TOOL_VIEW_IMAGE_ID,
+        TOOL_WEB_SEARCH_ID,
+        TOOL_IMAGE_GENERATION_ID,
+        TOOL_SPAWN_AGENT_ID,
+        TOOL_SEND_INPUT_ID,
+        TOOL_RESUME_AGENT_ID,
+        TOOL_WAIT_AGENT_ID,
+        TOOL_CLOSE_AGENT_ID,
+    ])));
+
+    let router = ToolRouter::from_config(
+        &tools_config,
+        ToolRouterParams {
+            mcp_tools: None,
+            deferred_mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            discoverable_tools: None,
+            extension_tool_bundles: Vec::new(),
+            dynamic_tools: &[],
+        },
+    );
+
+    assert_eq!(router.model_visible_specs(), Vec::<ToolSpec>::new());
+}
+
+#[test]
+fn builtin_context_lock_disables_agent_job_builtin_tools_when_enabled() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::SpawnCsv);
+    features.normalize_dependencies();
+    features.enable(Feature::Sqlite);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::Other(
+            "agent_job:test".to_string(),
+        )),
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_builtin_context_lock(Some(lock_with_disabled_tool_entries(&[
+        TOOL_SPAWN_AGENTS_ON_CSV_ID,
+        TOOL_REPORT_AGENT_JOB_RESULT_ID,
+    ])));
+
+    let (tools, registry) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_lacks_tool_name(&tools, "spawn_agents_on_csv");
+    assert_lacks_tool_name(&tools, "report_agent_job_result");
+    assert!(!registry.has_handler(&ToolName::plain("spawn_agents_on_csv")));
+    assert!(!registry.has_handler(&ToolName::plain("report_agent_job_result")));
+    assert_contains_tool_names(&tools, &["spawn_agent", REQUEST_USER_INPUT_TOOL_NAME]);
 }
 
 #[test]
@@ -2688,13 +2791,33 @@ fn model_info() -> ModelInfo {
 }
 
 fn lock_with_tool_entry(entry: ToolEntry) -> BuiltinContextLockTools {
+    lock_with_tool_entries(vec![entry])
+}
+
+fn lock_with_disabled_tool_entries(ids: &[&str]) -> BuiltinContextLockTools {
+    lock_with_tool_entries(
+        ids.iter()
+            .map(|id| ToolEntry {
+                id: (*id).to_string(),
+                enabled: false,
+                name: None,
+                spec: None,
+            })
+            .collect(),
+    )
+}
+
+fn lock_with_tool_entries(entries: Vec<ToolEntry>) -> BuiltinContextLockTools {
     BuiltinContextLockTools {
-        tools: vec![BuiltinContextLockToolEntry {
-            id: entry.id,
-            enabled: entry.enabled,
-            name: entry.name,
-            spec: entry.spec,
-        }],
+        tools: entries
+            .into_iter()
+            .map(|entry| BuiltinContextLockToolEntry {
+                id: entry.id,
+                enabled: entry.enabled,
+                name: entry.name,
+                spec: entry.spec,
+            })
+            .collect(),
     }
 }
 
