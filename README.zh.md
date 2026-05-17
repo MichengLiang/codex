@@ -118,6 +118,29 @@ freeform 映射采用精确匹配。Schema-level `description` / `title` annotat
 
 完整 contract、实现状态和验证记录见 [`micheng/Codex MCP Text Contract/`](<micheng/Codex MCP Text Contract/>)。
 
+## Builtin Context Lock
+
+Builtin Context Lock 是项目级的 Codex 内置模型可见上下文覆盖机制。lock 文件可以替换内置 base instructions，压制内置 context fragments，并压制或编辑内置 tool specs，同时保留 Codex runtime 的 provider 选择、认证、流式响应、session 存储和工具调用执行能力。
+
+lock 只作用于 Codex 内置来源。用户消息、AGENTS.md、MCP server、skills、plugins、对话历史、模型回复、provider 配置和认证仍由各自原有机制控制。
+
+在 `config.toml` 中启用 lock 文件：
+
+```toml
+[builtin_context_lock]
+path = ".codex/builtin-context.lock.json"
+```
+
+生成当前内置 catalog：
+
+```shell
+codex builtin-context-lock generate --output .codex/builtin-context.lock.json
+```
+
+每个生成条目由稳定 `id` 和 `enabled` 状态管理。启用条目使用 lock payload；禁用条目从模型可见内容中隐藏；缺失条目回退到 Codex 内置行为。工具条目保持原工具名和 handler routing。
+
+设计文档、实现计划、使用指南和黑盒验证流程见 [`micheng/Builtin Context Lock/`](<micheng/Builtin Context Lock/>)。
+
 ## 文档
 
 - [**Codex 文档**](https://developers.openai.com/codex)
