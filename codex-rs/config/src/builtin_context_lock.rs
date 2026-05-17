@@ -187,6 +187,7 @@ pub enum FragmentDecision<'a> {
 
 pub fn generate_builtin_context_lock(
     model_catalog_base_instructions: impl Into<String>,
+    tools: Vec<ToolEntry>,
 ) -> GeneratedBuiltinContextLock {
     GeneratedBuiltinContextLock {
         schema_version: SCHEMA_VERSION,
@@ -203,15 +204,7 @@ pub fn generate_builtin_context_lock(
                 content: None,
             })
             .collect(),
-        tools: KNOWN_TOOL_NAMES
-            .iter()
-            .map(|(id, name)| ToolEntry {
-                id: (*id).to_string(),
-                enabled: true,
-                name: Some((*name).to_string()),
-                spec: None,
-            })
-            .collect(),
+        tools,
         templates: KNOWN_TEMPLATE_IDS
             .iter()
             .map(|id| TemplateEntry {
@@ -449,6 +442,12 @@ fn expected_tool_name(id: &str) -> Option<&'static str> {
         .find_map(|(known_id, name)| (*known_id == id).then_some(*name))
 }
 
+pub fn known_tool_id_for_name(name: &str) -> Option<&'static str> {
+    KNOWN_TOOL_NAMES
+        .iter()
+        .find_map(|(known_id, known_name)| (*known_name == name).then_some(*known_id))
+}
+
 fn validate_tool_name(id: &str, expected_name: &str, actual_name: &str) -> io::Result<()> {
     if actual_name == expected_name {
         return Ok(());
@@ -519,7 +518,16 @@ mod tests {
 
     #[test]
     fn generated_lock_has_stable_shape_and_default_enabled_entries() {
-        let lock = generate_builtin_context_lock("base");
+        let tools = KNOWN_TOOL_NAMES
+            .iter()
+            .map(|(id, name)| ToolEntry {
+                id: (*id).to_string(),
+                enabled: true,
+                name: Some((*name).to_string()),
+                spec: None,
+            })
+            .collect::<Vec<_>>();
+        let lock = generate_builtin_context_lock("base", tools.clone());
 
         assert_eq!(
             lock,
@@ -538,15 +546,7 @@ mod tests {
                         content: None,
                     })
                     .collect(),
-                tools: KNOWN_TOOL_NAMES
-                    .iter()
-                    .map(|(id, name)| ToolEntry {
-                        id: (*id).to_string(),
-                        enabled: true,
-                        name: Some((*name).to_string()),
-                        spec: None,
-                    })
-                    .collect(),
+                tools,
                 templates: Vec::new(),
             }
         );

@@ -7,11 +7,20 @@ use crate::tools::handlers::multi_agents_common::MIN_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::registry::ToolRegistryBuilder;
 use crate::tools::spec_plan::build_tool_registry_builder;
+use crate::tools::spec_plan::generate_builtin_context_lock_tool_entries;
 use crate::tools::spec_plan_types::ToolNamespace;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use codex_config::builtin_context_lock::BuiltinContextLock;
+use codex_config::builtin_context_lock::ToolEntry;
 use codex_mcp::ToolInfo;
+use codex_protocol::config_types::WebSearchConfig;
+use codex_protocol::config_types::WebSearchMode;
+use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::protocol::SessionSource;
 use codex_tool_api::ToolBundle as ExtensionToolBundle;
 use codex_tools::AdditionalProperties;
 use codex_tools::BuiltinContextLockToolEntry;
@@ -22,6 +31,7 @@ use codex_tools::ResponsesApiTool;
 use codex_tools::ToolName;
 use codex_tools::ToolUserShellType;
 use codex_tools::ToolsConfig;
+use codex_tools::ToolsConfigParams;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -51,6 +61,29 @@ pub(crate) fn builtin_context_lock_tools_config(
             })
             .collect(),
     })
+}
+
+pub fn generate_builtin_context_lock_tool_entries_for_model(
+    model_info: &ModelInfo,
+    available_models: &[ModelPreset],
+    features: &codex_features::Features,
+    web_search_mode: Option<WebSearchMode>,
+    web_search_config: Option<WebSearchConfig>,
+    allow_login_shell: bool,
+) -> Vec<ToolEntry> {
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info,
+        available_models,
+        features,
+        image_generation_tool_auth_allowed: false,
+        web_search_mode,
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_allow_login_shell(allow_login_shell)
+    .with_web_search_config(web_search_config);
+    generate_builtin_context_lock_tool_entries(&tools_config)
 }
 
 struct McpToolPlanInputs {

@@ -6,12 +6,14 @@ use codex_config::builtin_context_lock::generate_builtin_context_lock;
 use codex_config::config_toml::ConfigToml;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_and_loader_overrides;
+use codex_core::generate_builtin_context_lock_tool_entries_for_model;
 use codex_features::Feature;
 use codex_features::FeatureConfigSource;
 use codex_features::FeatureOverrides;
 use codex_features::Features;
 use codex_models_manager::ModelsManagerConfig;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -75,7 +77,23 @@ async fn run_generate(
     .await?;
 
     let output_path = resolve_output_path(command.output, &config_toml)?;
-    let lock = generate_builtin_context_lock(model_catalog_base_instructions(&config_toml)?);
+    let model = configured_model(&config_toml)?;
+    let model_info = model_info_from_bundled_catalog(&model, &config_toml)?;
+    let features = configured_features(&config_toml)?;
+    let available_models = bundled_model_presets()?;
+    let (web_search_mode, web_search_config, allow_login_shell) =
+        generate_tools_config_inputs(&config_toml, &features)?;
+    let lock = generate_builtin_context_lock(
+        model_info.get_model_instructions(configured_personality(&config_toml)?),
+        generate_builtin_context_lock_tool_entries_for_model(
+            &model_info,
+            &available_models,
+            &features,
+            web_search_mode,
+            web_search_config,
+            allow_login_shell,
+        ),
+    );
     let json = serde_json::to_string_pretty(&lock).context("serialize builtin context lock")?;
     if let Some(parent) = output_path.as_path().parent() {
         tokio::fs::create_dir_all(parent).await.with_context(|| {
@@ -124,12 +142,6 @@ fn resolve_output_path(
     );
 }
 
-fn model_catalog_base_instructions(config_toml: &ConfigToml) -> Result<String> {
-    let model = configured_model(config_toml)?;
-    let model_info = model_info_from_bundled_catalog(&model, config_toml)?;
-    Ok(model_info.get_model_instructions(configured_personality(config_toml)?))
-}
-
 fn configured_model(config_toml: &ConfigToml) -> Result<String> {
     let profile = config_toml.get_config_profile(/*override_profile*/ None)?;
     if let Some(model) = profile.model.or_else(|| config_toml.model.clone()) {
@@ -140,11 +152,7 @@ fn configured_model(config_toml: &ConfigToml) -> Result<String> {
         .context("load bundled model catalog")?
         .models;
     models.sort_by_key(|left| left.priority);
-    let presets: Vec<ModelPreset> = models
-        .into_iter()
-        .map(Into::into)
-        .filter(|preset: &ModelPreset| preset.supported_in_api)
-        .collect();
+    let presets = bundled_model_presets_from_models(models);
     Ok(presets
         .iter()
         .find(|preset| preset.show_in_picker)
@@ -153,16 +161,50 @@ fn configured_model(config_toml: &ConfigToml) -> Result<String> {
         .unwrap_or_default())
 }
 
-fn configured_personality(
+fn generate_tools_config_inputs(
     config_toml: &ConfigToml,
-) -> Result<Option<codex_config::types::Personality>> {
-    let profile = config_toml.get_config_profile(/*override_profile*/ None)?;
-    let explicit_personality = profile.personality.or(config_toml.personality);
-    if explicit_personality.is_some() {
-        return Ok(explicit_personality);
-    }
+    features: &Features,
+) -> Result<(
+    Option<WebSearchMode>,
+    Option<codex_protocol::config_types::WebSearchConfig>,
+    bool,
+)> {
+    let config_profile = config_toml.get_config_profile(/*override_profile*/ None)?;
+    let web_search_mode = config_profile
+        .web_search
+        .or(config_toml.web_search)
+        .or_else(|| {
+            features
+                .enabled(Feature::WebSearchCached)
+                .then_some(WebSearchMode::Cached)
+        })
+        .or_else(|| {
+            features
+                .enabled(Feature::WebSearchRequest)
+                .then_some(WebSearchMode::Live)
+        });
+    let allow_login_shell = config_toml.allow_login_shell.unwrap_or(true);
+    let web_search_config = match (
+        config_toml
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.web_search.as_ref()),
+        config_profile
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.web_search.as_ref()),
+    ) {
+        (None, None) => None,
+        (Some(base), None) => Some(base.clone().into()),
+        (None, Some(profile)) => Some(profile.clone().into()),
+        (Some(base), Some(profile)) => Some(base.merge(profile).into()),
+    };
+    Ok((web_search_mode, web_search_config, allow_login_shell))
+}
 
-    let features = Features::from_sources(
+fn configured_features(config_toml: &ConfigToml) -> Result<Features> {
+    let profile = config_toml.get_config_profile(/*override_profile*/ None)?;
+    Ok(Features::from_sources(
         FeatureConfigSource {
             features: config_toml.features.as_ref(),
             include_apply_patch_tool: None,
@@ -177,7 +219,19 @@ fn configured_personality(
             experimental_use_unified_exec_tool: profile.experimental_use_unified_exec_tool,
         },
         FeatureOverrides::default(),
-    );
+    ))
+}
+
+fn configured_personality(
+    config_toml: &ConfigToml,
+) -> Result<Option<codex_config::types::Personality>> {
+    let profile = config_toml.get_config_profile(/*override_profile*/ None)?;
+    let explicit_personality = profile.personality.or(config_toml.personality);
+    if explicit_personality.is_some() {
+        return Ok(explicit_personality);
+    }
+
+    let features = configured_features(config_toml)?;
     Ok(features
         .enabled(Feature::Personality)
         .then_some(codex_config::types::Personality::Pragmatic))
@@ -208,6 +262,22 @@ fn model_info_from_bundled_catalog(model: &str, config_toml: &ConfigToml) -> Res
             ..Default::default()
         },
     ))
+}
+
+fn bundled_model_presets() -> Result<Vec<ModelPreset>> {
+    let mut models = bundled_models_response()
+        .context("load bundled model catalog")?
+        .models;
+    models.sort_by_key(|left| left.priority);
+    Ok(bundled_model_presets_from_models(models))
+}
+
+fn bundled_model_presets_from_models(models: Vec<ModelInfo>) -> Vec<ModelPreset> {
+    models
+        .into_iter()
+        .map(Into::into)
+        .filter(|preset: &ModelPreset| preset.supported_in_api)
+        .collect()
 }
 
 #[cfg(test)]

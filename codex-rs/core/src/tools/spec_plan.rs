@@ -32,7 +32,11 @@ use crate::tools::handlers::multi_agents::ResumeAgentHandler;
 use crate::tools::handlers::multi_agents::SendInputHandler;
 use crate::tools::handlers::multi_agents::SpawnAgentHandler;
 use crate::tools::handlers::multi_agents::WaitAgentHandler;
+use crate::tools::handlers::multi_agents_common::DEFAULT_WAIT_TIMEOUT_MS;
+use crate::tools::handlers::multi_agents_common::MAX_WAIT_TIMEOUT_MS;
+use crate::tools::handlers::multi_agents_common::MIN_WAIT_TIMEOUT_MS;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
+use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
@@ -48,33 +52,7 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolRegistryBuilder;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use crate::tools::spec_plan_types::agent_type_description;
-use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
-use codex_config::builtin_context_lock::TOOL_CLOSE_AGENT_ID;
-use codex_config::builtin_context_lock::TOOL_CREATE_GOAL_ID;
-use codex_config::builtin_context_lock::TOOL_EXEC_COMMAND_ID;
-use codex_config::builtin_context_lock::TOOL_FOLLOWUP_TASK_ID;
-use codex_config::builtin_context_lock::TOOL_GET_GOAL_ID;
-use codex_config::builtin_context_lock::TOOL_IMAGE_GENERATION_ID;
-use codex_config::builtin_context_lock::TOOL_LIST_AGENTS_ID;
-use codex_config::builtin_context_lock::TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID;
-use codex_config::builtin_context_lock::TOOL_LIST_MCP_RESOURCES_ID;
-use codex_config::builtin_context_lock::TOOL_LOCAL_SHELL_ID;
-use codex_config::builtin_context_lock::TOOL_READ_MCP_RESOURCE_ID;
-use codex_config::builtin_context_lock::TOOL_REPORT_AGENT_JOB_RESULT_ID;
-use codex_config::builtin_context_lock::TOOL_REQUEST_PERMISSIONS_ID;
-use codex_config::builtin_context_lock::TOOL_REQUEST_USER_INPUT_ID;
-use codex_config::builtin_context_lock::TOOL_RESUME_AGENT_ID;
-use codex_config::builtin_context_lock::TOOL_SEND_INPUT_ID;
-use codex_config::builtin_context_lock::TOOL_SEND_MESSAGE_ID;
-use codex_config::builtin_context_lock::TOOL_SHELL_ID;
-use codex_config::builtin_context_lock::TOOL_SPAWN_AGENT_ID;
-use codex_config::builtin_context_lock::TOOL_SPAWN_AGENTS_ON_CSV_ID;
-use codex_config::builtin_context_lock::TOOL_UPDATE_GOAL_ID;
-use codex_config::builtin_context_lock::TOOL_UPDATE_PLAN_ID;
-use codex_config::builtin_context_lock::TOOL_VIEW_IMAGE_ID;
-use codex_config::builtin_context_lock::TOOL_WAIT_AGENT_ID;
-use codex_config::builtin_context_lock::TOOL_WEB_SEARCH_ID;
-use codex_config::builtin_context_lock::TOOL_WRITE_STDIN_ID;
+use codex_config::builtin_context_lock::*;
 use codex_mcp::ToolInfo;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_tools::BuiltinContextLockToolEntry;
@@ -778,6 +756,43 @@ pub fn build_tool_registry_builder(
     }
 
     builder
+}
+
+pub fn generate_builtin_context_lock_tool_entries(config: &ToolsConfig) -> Vec<ToolEntry> {
+    let mut config = config.clone();
+    config.builtin_context_lock_tools = None;
+    let tool_search_entries = Vec::new();
+    let builder = build_tool_registry_builder(
+        &config,
+        ToolRegistryBuildParams {
+            mcp_tools: None,
+            deferred_mcp_tools: None,
+            tool_namespaces: None,
+            discoverable_tools: None,
+            extension_tool_bundles: &[],
+            dynamic_tools: &[],
+            default_agent_type_description: "",
+            wait_agent_timeouts: WaitAgentTimeoutOptions {
+                default_timeout_ms: DEFAULT_WAIT_TIMEOUT_MS,
+                min_timeout_ms: MIN_WAIT_TIMEOUT_MS,
+                max_timeout_ms: MAX_WAIT_TIMEOUT_MS,
+            },
+            tool_search_entries: &tool_search_entries,
+        },
+    );
+    let mut entries = builder
+        .specs()
+        .iter()
+        .filter_map(|spec| known_tool_id_for_name(spec.name()).map(|id| (id, spec)))
+        .map(|(id, spec)| ToolEntry {
+            id: id.to_string(),
+            enabled: true,
+            name: Some(spec.name().to_string()),
+            spec: Some(serde_json::to_value(spec).expect("builtin tool specs serialize")),
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    entries
 }
 
 fn compare_code_mode_tools(

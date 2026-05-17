@@ -27,6 +27,7 @@ use crate::tools::handlers::view_image_spec::create_view_image_tool;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::router::ToolRouter;
 use crate::tools::router::ToolRouterParams;
+use crate::tools::spec_plan::generate_builtin_context_lock_tool_entries;
 use crate::tools::spec_plan_types::ToolNamespace;
 use codex_app_server_protocol::AppInfo;
 use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
@@ -355,6 +356,103 @@ fn builtin_context_lock_disables_agent_job_builtin_tools_when_enabled() {
     assert!(!registry.has_handler(&ToolName::plain("spawn_agents_on_csv")));
     assert!(!registry.has_handler(&ToolName::plain("report_agent_job_result")));
     assert_contains_tool_names(&tools, &["spawn_agent", REQUEST_USER_INPUT_TOOL_NAME]);
+}
+
+#[test]
+fn generated_builtin_context_lock_tools_include_apply_patch_spec() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    let tools = generate_builtin_context_lock_tool_entries(&tools_config);
+
+    let apply_patch = tools
+        .iter()
+        .find(|entry| entry.id == TOOL_APPLY_PATCH_ID)
+        .expect("generated apply_patch lock entry");
+    let expected_spec = serde_json::to_value(create_apply_patch_freeform_tool(
+        /*include_environment_id*/ false,
+    ))
+    .expect("serialize expected apply_patch spec");
+    assert_eq!(
+        apply_patch,
+        &ToolEntry {
+            id: TOOL_APPLY_PATCH_ID.to_string(),
+            enabled: true,
+            name: Some("apply_patch".to_string()),
+            spec: Some(expected_spec),
+        }
+    );
+}
+
+#[test]
+fn generated_builtin_context_lock_tools_exclude_external_tools() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    let generated_tools = generate_builtin_context_lock_tool_entries(&tools_config);
+    let generated_specs = generated_tools
+        .iter()
+        .filter_map(|entry| entry.spec.clone())
+        .map(serde_json::from_value::<ToolSpec>)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("generated specs should deserialize");
+
+    let dynamic_tools = vec![DynamicToolSpec {
+        namespace: None,
+        name: "plain_dynamic".to_string(),
+        description: "Plain dynamic tool.".to_string(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        defer_loading: false,
+    }];
+    let extension_tool_bundles = vec![extension_tool_bundle(
+        "external_extension",
+        "External extension tool.",
+    )];
+    let (all_specs, _) = build_specs_with_discoverable_tools(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("mcp__sample__", "external_mcp"),
+            mcp_tool(
+                "external_mcp",
+                "External MCP tool.",
+                serde_json::json!({"type": "object"}),
+            ),
+        )])),
+        /*deferred_mcp_tools*/ None,
+        /*discoverable_tools*/ None,
+        &extension_tool_bundles,
+        &dynamic_tools,
+    );
+
+    assert_contains_tool_names(
+        &all_specs,
+        &["mcp__sample__", "plain_dynamic", "external_extension"],
+    );
+    assert_lacks_tool_name(&generated_specs, "mcp__sample__");
+    assert_lacks_tool_name(&generated_specs, "plain_dynamic");
+    assert_lacks_tool_name(&generated_specs, "external_extension");
 }
 
 #[test]
