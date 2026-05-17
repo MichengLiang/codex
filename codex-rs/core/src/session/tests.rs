@@ -76,6 +76,9 @@ use crate::tools::router::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::McpElicitationSchema;
+use codex_config::builtin_context_lock::BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID;
+use codex_config::builtin_context_lock::BaseInstructionsEntry;
+use codex_config::builtin_context_lock::BuiltinContextLock;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_execpolicy::Decision;
@@ -91,11 +94,18 @@ use codex_otel::THREAD_SKILLS_TRUNCATED_METRIC;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelVisibility;
+use codex_protocol::openai_models::TruncationPolicyConfig;
+use codex_protocol::openai_models::WebSearchToolType;
+use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ConversationAudioParams;
@@ -112,6 +122,8 @@ use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::RealtimeVoicesList;
 use codex_protocol::protocol::ResumedHistory;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::SessionMeta;
+use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadGoalStatus;
@@ -164,6 +176,7 @@ use codex_protocol::mcp::CallToolResult as McpCallToolResult;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -1176,6 +1189,167 @@ async fn get_base_instructions_no_user_content() {
 
         let base_instructions = session.get_base_instructions().await;
         assert_eq!(base_instructions.text, model_info.base_instructions);
+    }
+}
+
+#[tokio::test]
+async fn explicit_base_instructions_beat_builtin_context_lock_base_content() {
+    let model_info = model_info_with_base_instructions("model catalog instructions");
+    let config = config_with_base_lock_entry(
+        /*enabled*/ true,
+        Some("lock instructions"),
+        /*explicit_base_instructions*/ Some("explicit instructions"),
+    )
+    .await;
+
+    let base_instructions =
+        resolve_session_base_instructions(&config, &InitialHistory::New, &model_info);
+
+    assert_eq!(base_instructions, "explicit instructions");
+}
+
+#[tokio::test]
+async fn builtin_context_lock_base_content_applies_without_override_or_history() {
+    let model_info = model_info_with_base_instructions("model catalog instructions");
+    let config =
+        config_with_base_lock_entry(/*enabled*/ true, Some("lock instructions"), None).await;
+
+    let base_instructions =
+        resolve_session_base_instructions(&config, &InitialHistory::New, &model_info);
+
+    assert_eq!(base_instructions, "lock instructions");
+}
+
+#[tokio::test]
+async fn builtin_context_lock_disabled_base_entry_yields_empty_instructions() {
+    let model_info = model_info_with_base_instructions("model catalog instructions");
+    let config = config_with_base_lock_entry(/*enabled*/ false, None, None).await;
+
+    let base_instructions =
+        resolve_session_base_instructions(&config, &InitialHistory::New, &model_info);
+
+    assert_eq!(base_instructions, "");
+}
+
+#[tokio::test]
+async fn no_builtin_context_lock_preserves_model_catalog_base_instructions() {
+    let model_info = model_info_with_base_instructions("model catalog instructions");
+    let config = test_config().await;
+
+    let base_instructions =
+        resolve_session_base_instructions(&config, &InitialHistory::New, &model_info);
+
+    assert_eq!(base_instructions, "model catalog instructions");
+}
+
+#[tokio::test]
+async fn resumed_history_base_instructions_beat_builtin_context_lock_base_content() {
+    let model_info = model_info_with_base_instructions("model catalog instructions");
+    let config =
+        config_with_base_lock_entry(/*enabled*/ true, Some("lock instructions"), None).await;
+    let history = InitialHistory::Resumed(ResumedHistory {
+        conversation_id: ThreadId::default(),
+        history: vec![session_meta_with_base_instructions("history instructions")],
+        rollout_path: None,
+    });
+
+    let base_instructions = resolve_session_base_instructions(&config, &history, &model_info);
+
+    assert_eq!(base_instructions, "history instructions");
+}
+
+#[tokio::test]
+async fn forked_history_base_instructions_beat_builtin_context_lock_base_content() {
+    let model_info = model_info_with_base_instructions("model catalog instructions");
+    let config =
+        config_with_base_lock_entry(/*enabled*/ true, Some("lock instructions"), None).await;
+    let history = InitialHistory::Forked(vec![session_meta_with_base_instructions(
+        "forked instructions",
+    )]);
+
+    let base_instructions = resolve_session_base_instructions(&config, &history, &model_info);
+
+    assert_eq!(base_instructions, "forked instructions");
+}
+
+fn session_meta_with_base_instructions(text: &str) -> RolloutItem {
+    RolloutItem::SessionMeta(SessionMetaLine {
+        meta: SessionMeta {
+            base_instructions: Some(BaseInstructions {
+                text: text.to_string(),
+            }),
+            ..SessionMeta::default()
+        },
+        git: None,
+    })
+}
+
+async fn config_with_base_lock_entry(
+    enabled: bool,
+    content: Option<&str>,
+    explicit_base_instructions: Option<&str>,
+) -> Config {
+    let mut config = test_config().await;
+    config.base_instructions = explicit_base_instructions.map(ToString::to_string);
+
+    let mut base_instructions = BTreeMap::new();
+    base_instructions.insert(
+        BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID.to_string(),
+        BaseInstructionsEntry {
+            id: BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID.to_string(),
+            enabled,
+            content: content.map(ToString::to_string),
+        },
+    );
+    config.builtin_context_lock = Some(BuiltinContextLock {
+        path: config
+            .codex_home
+            .as_path()
+            .join("builtin-context.lock.json")
+            .abs(),
+        schema_version: 1,
+        base_instructions,
+        fragments: BTreeMap::new(),
+        tools: BTreeMap::new(),
+        templates: BTreeMap::new(),
+    });
+    config
+}
+
+fn model_info_with_base_instructions(base_instructions: &str) -> ModelInfo {
+    ModelInfo {
+        slug: "test-model".to_string(),
+        display_name: "Test Model".to_string(),
+        description: None,
+        default_reasoning_level: None,
+        supported_reasoning_levels: vec![],
+        shell_type: ConfigShellToolType::ShellCommand,
+        visibility: ModelVisibility::List,
+        supported_in_api: true,
+        priority: 1,
+        additional_speed_tiers: Vec::new(),
+        service_tiers: Vec::new(),
+        availability_nux: None,
+        upgrade: None,
+        base_instructions: base_instructions.to_string(),
+        model_messages: None,
+        supports_reasoning_summaries: false,
+        default_reasoning_summary: ReasoningSummary::Auto,
+        support_verbosity: false,
+        default_verbosity: None,
+        apply_patch_tool_type: None,
+        web_search_tool_type: WebSearchToolType::Text,
+        truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
+        supports_parallel_tool_calls: false,
+        supports_image_detail_original: false,
+        context_window: None,
+        max_context_window: None,
+        auto_compact_token_limit: None,
+        effective_context_window_percent: 95,
+        experimental_supported_tools: vec![],
+        input_modalities: default_input_modalities(),
+        used_fallback_model_metadata: false,
+        supports_search_tool: false,
     }
 }
 

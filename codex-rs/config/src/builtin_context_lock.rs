@@ -6,7 +6,10 @@ use std::io;
 
 const SCHEMA_VERSION: u32 = 1;
 
-const KNOWN_BASE_INSTRUCTIONS_IDS: &[&str] = &["builtin.base_instructions.model_catalog.current"];
+pub const BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID: &str =
+    "builtin.base_instructions.model_catalog.current";
+
+const KNOWN_BASE_INSTRUCTIONS_IDS: &[&str] = &[BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID];
 const KNOWN_FRAGMENT_IDS: &[&str] = &[
     "builtin.fragment.permissions_instructions",
     "builtin.fragment.collaboration_mode_instructions",
@@ -83,6 +86,12 @@ pub struct TemplateEntry {
     pub content: Option<String>,
 }
 
+pub enum BaseInstructionsDecision<'a> {
+    UseContent(&'a str),
+    Disable,
+    Unmanaged,
+}
+
 #[derive(Debug, Deserialize)]
 struct LockFile {
     schema_version: u32,
@@ -127,6 +136,26 @@ pub async fn read_builtin_context_lock_from_path(
 }
 
 impl BuiltinContextLock {
+    pub fn model_catalog_base_instructions_decision(&self) -> BaseInstructionsDecision<'_> {
+        let Some(entry) = self
+            .base_instructions
+            .get(BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID)
+        else {
+            return BaseInstructionsDecision::Unmanaged;
+        };
+
+        if !entry.enabled {
+            return BaseInstructionsDecision::Disable;
+        }
+
+        BaseInstructionsDecision::UseContent(
+            entry
+                .content
+                .as_deref()
+                .expect("enabled base instructions lock entries are validated during parsing"),
+        )
+    }
+
     fn from_lock_file(
         path: AbsolutePathBuf,
         lock_file: LockFile,
@@ -142,15 +171,18 @@ impl BuiltinContextLock {
             ));
         }
 
+        let base_instructions = known_entries(
+            "base_instructions",
+            lock_file.base_instructions,
+            KNOWN_BASE_INSTRUCTIONS_IDS,
+            startup_warnings,
+        )?;
+        validate_base_instructions(&base_instructions)?;
+
         Ok(Self {
             path,
             schema_version: lock_file.schema_version,
-            base_instructions: known_entries(
-                "base_instructions",
-                lock_file.base_instructions,
-                KNOWN_BASE_INSTRUCTIONS_IDS,
-                startup_warnings,
-            )?,
+            base_instructions,
             fragments: known_entries(
                 "fragments",
                 lock_file.fragments,
@@ -222,4 +254,19 @@ where
         }
     }
     Ok(known_entries)
+}
+
+fn validate_base_instructions(entries: &BTreeMap<String, BaseInstructionsEntry>) -> io::Result<()> {
+    for entry in entries.values() {
+        if entry.enabled && entry.content.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "builtin context lock id `{}` in `base_instructions` must provide `content` when enabled",
+                    entry.id
+                ),
+            ));
+        }
+    }
+    Ok(())
 }

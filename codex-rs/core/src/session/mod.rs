@@ -48,6 +48,7 @@ use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::SubAgentThreadStartedInput;
 use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
+use codex_config::builtin_context_lock::BaseInstructionsDecision;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
@@ -541,15 +542,13 @@ impl Codex {
         // Resolve base instructions for the session. Priority order:
         // 1. config.base_instructions override
         // 2. conversation history => session_meta.base_instructions
-        // 3. base_instructions for current model
+        // 3. builtin context lock base instructions fallback
+        // 4. base_instructions for current model
         let model_info = models_manager
             .get_model_info(model.as_str(), &config.to_models_manager_config())
             .await;
-        let base_instructions = config
-            .base_instructions
-            .clone()
-            .or_else(|| conversation_history.get_base_instructions().map(|s| s.text))
-            .unwrap_or_else(|| model_info.get_model_instructions(config.personality));
+        let base_instructions =
+            resolve_session_base_instructions(&config, &conversation_history, &model_info);
 
         // Respect thread-start tools. When missing (resumed/forked threads), read from the db
         // first, then fall back to rollout-file tools.
@@ -800,6 +799,30 @@ impl Codex {
     pub(crate) fn enabled(&self, feature: Feature) -> bool {
         self.session.enabled(feature)
     }
+}
+
+fn resolve_session_base_instructions(
+    config: &crate::config::Config,
+    conversation_history: &InitialHistory,
+    model_info: &ModelInfo,
+) -> String {
+    config
+        .base_instructions
+        .clone()
+        .or_else(|| conversation_history.get_base_instructions().map(|s| s.text))
+        .unwrap_or_else(|| {
+            match config
+                .builtin_context_lock
+                .as_ref()
+                .map(|lock| lock.model_catalog_base_instructions_decision())
+            {
+                Some(BaseInstructionsDecision::UseContent(content)) => content.to_string(),
+                Some(BaseInstructionsDecision::Disable) => String::new(),
+                Some(BaseInstructionsDecision::Unmanaged) | None => {
+                    model_info.get_model_instructions(config.personality)
+                }
+            }
+        })
 }
 
 fn get_service_tier(
