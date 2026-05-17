@@ -63,6 +63,7 @@ local-release-build.md -> 本地日用 release 构建、codex-micheng 安装名�
 ```text
 Codex 原生文件阅读与文件上下文展开工具规格.md -> 原生 read_file 与 load_files_context 规格
 关于上下文调试器.md                         -> Runtime Context Control Plane 设计草案
+Builtin Context Lock/                         -> Codex 内置模型可见上下文覆盖机制设计
 ```
 
 ## 当前基线
