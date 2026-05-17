@@ -126,17 +126,22 @@ impl<'a> BuiltinToolLock<'a> {
             return;
         }
 
-        if let Some(spec) = entry.spec.as_ref() {
-            let spec = serde_json::from_value::<ToolSpec>(spec.clone()).unwrap_or_else(|err| {
-                panic!(
-                    "failed to parse builtin context lock spec for id `{builtin_id}` as tool spec: {err}"
-                )
-            });
-            validate_locked_tool_name(builtin_id, &tool_name, entry.name.as_deref(), &spec);
+        if let Some(spec_value) = entry.spec.as_ref() {
+            let spec = match serde_json::from_value::<ToolSpec>(spec_value.clone()) {
+                Ok(spec) => spec,
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to parse builtin context lock spec for id `{builtin_id}` as tool spec: {err}"
+                    );
+                    builder.register_handler(handler);
+                    return;
+                }
+            };
+            debug_assert_locked_tool_name(builtin_id, &tool_name, entry.name.as_deref(), &spec);
             builder.register_handler_with_spec_override(handler, spec);
         } else {
             if let Some(locked_name) = entry.name.as_deref() {
-                validate_locked_tool_name_text(builtin_id, &tool_name, locked_name);
+                debug_assert_locked_tool_name_text(builtin_id, &tool_name, locked_name);
             }
             builder.register_handler(handler);
         }
@@ -178,14 +183,18 @@ impl<'a> BuiltinToolLock<'a> {
         }
 
         let spec = match entry.spec.as_ref() {
-            Some(spec) => serde_json::from_value::<ToolSpec>(spec.clone()).unwrap_or_else(|err| {
-                panic!(
-                    "failed to parse builtin context lock spec for id `{builtin_id}` as tool spec: {err}"
-                )
-            }),
+            Some(spec) => match serde_json::from_value::<ToolSpec>(spec.clone()) {
+                Ok(spec) => spec,
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to parse builtin context lock spec for id `{builtin_id}` as tool spec: {err}"
+                    );
+                    default_spec
+                }
+            },
             None => default_spec,
         };
-        validate_locked_spec_name(builtin_id, entry.name.as_deref(), &spec);
+        debug_assert_locked_spec_name(builtin_id, entry.name.as_deref(), &spec);
         builder.push_spec(spec);
     }
 
@@ -194,40 +203,42 @@ impl<'a> BuiltinToolLock<'a> {
     }
 }
 
-fn validate_locked_tool_name(
+fn debug_assert_locked_tool_name(
     builtin_id: &str,
     handler_name: &ToolName,
     locked_name: Option<&str>,
     spec: &ToolSpec,
 ) {
     if let Some(locked_name) = locked_name {
-        validate_locked_tool_name_text(builtin_id, handler_name, locked_name);
+        debug_assert_locked_tool_name_text(builtin_id, handler_name, locked_name);
     }
-    validate_locked_name_text(builtin_id, handler_name.name.as_str(), spec.name());
+    debug_assert_locked_name_text(builtin_id, handler_name.name.as_str(), spec.name());
 }
 
-fn validate_locked_tool_name_text(builtin_id: &str, handler_name: &ToolName, locked_name: &str) {
+fn debug_assert_locked_tool_name_text(
+    builtin_id: &str,
+    handler_name: &ToolName,
+    locked_name: &str,
+) {
     let expected_name = handler_name.name.as_str();
-    if handler_name.namespace.is_some() {
-        panic!(
-            "builtin context lock id `{builtin_id}` expected non-namespaced tool name `{expected_name}`"
-        );
-    }
-    validate_locked_name_text(builtin_id, expected_name, locked_name);
+    debug_assert!(
+        handler_name.namespace.is_none(),
+        "builtin context lock id `{builtin_id}` expected non-namespaced tool name `{expected_name}`"
+    );
+    debug_assert_locked_name_text(builtin_id, expected_name, locked_name);
 }
 
-fn validate_locked_spec_name(builtin_id: &str, locked_name: Option<&str>, spec: &ToolSpec) {
+fn debug_assert_locked_spec_name(builtin_id: &str, locked_name: Option<&str>, spec: &ToolSpec) {
     if let Some(locked_name) = locked_name {
-        validate_locked_name_text(builtin_id, spec.name(), locked_name);
+        debug_assert_locked_name_text(builtin_id, spec.name(), locked_name);
     }
 }
 
-fn validate_locked_name_text(builtin_id: &str, expected_name: &str, locked_name: &str) {
-    if locked_name != expected_name {
-        panic!(
-            "builtin context lock id `{builtin_id}` expected tool name `{expected_name}` but lock payload names `{locked_name}`"
-        );
-    }
+fn debug_assert_locked_name_text(builtin_id: &str, expected_name: &str, locked_name: &str) {
+    debug_assert_eq!(
+        locked_name, expected_name,
+        "builtin context lock id `{builtin_id}` expected tool name `{expected_name}` but lock payload names `{locked_name}`"
+    );
 }
 
 pub fn build_tool_registry_builder(

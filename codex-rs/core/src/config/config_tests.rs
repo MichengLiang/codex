@@ -8,6 +8,8 @@ use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::RequirementSource;
+use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
+use codex_config::builtin_context_lock::TOOL_WEB_SEARCH_ID;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
@@ -6241,6 +6243,169 @@ async fn configured_builtin_context_lock_unknown_id_warns_without_failing() -> s
             )),
         "{:?}",
         config.startup_warnings
+    );
+    Ok(())
+}
+
+async fn load_builtin_context_lock_json_expect_err(
+    mut lock_json: serde_json::Value,
+    message: &str,
+) -> std::io::Result<std::io::Error> {
+    let lock = lock_json
+        .as_object_mut()
+        .expect("test lock JSON should be an object");
+    lock.entry("base_instructions")
+        .or_insert_with(|| serde_json::json!([]));
+    lock.entry("fragments")
+        .or_insert_with(|| serde_json::json!([]));
+    lock.entry("tools").or_insert_with(|| serde_json::json!([]));
+    lock.entry("templates")
+        .or_insert_with(|| serde_json::json!([]));
+
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home.path().join("builtin-context.lock.json");
+    tokio::fs::write(&lock_path, lock_json.to_string()).await?;
+
+    Ok(Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            builtin_context_lock: Some(BuiltinContextLockToml {
+                path: lock_path.abs(),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err(message))
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_tool_name_mismatch_fails() -> std::io::Result<()> {
+    let err = load_builtin_context_lock_json_expect_err(
+        serde_json::json!({
+            "schema_version": 1,
+            "tools": [{
+                "id": TOOL_APPLY_PATCH_ID,
+                "enabled": true,
+                "name": "not_apply_patch"
+            }]
+        }),
+        "tool name mismatch should fail config load",
+    )
+    .await?;
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("expected tool name `apply_patch` but lock payload names `not_apply_patch`")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_tool_spec_name_mismatch_fails() -> std::io::Result<()> {
+    let err = load_builtin_context_lock_json_expect_err(
+        serde_json::json!({
+            "schema_version": 1,
+            "tools": [{
+                "id": TOOL_APPLY_PATCH_ID,
+                "enabled": true,
+                "spec": {
+                    "type": "custom",
+                    "name": "not_apply_patch",
+                    "description": "Bad name.",
+                    "format": { "type": "grammar", "syntax": "", "definition": "" }
+                }
+            }]
+        }),
+        "tool spec name mismatch should fail config load",
+    )
+    .await?;
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("expected tool name `apply_patch` but lock payload names `not_apply_patch`")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_function_spec_without_name_fails() -> std::io::Result<()> {
+    let err = load_builtin_context_lock_json_expect_err(
+        serde_json::json!({
+            "schema_version": 1,
+            "tools": [{
+                "id": TOOL_APPLY_PATCH_ID,
+                "enabled": true,
+                "spec": {
+                    "type": "function",
+                    "description": "Missing name.",
+                    "strict": false,
+                    "parameters": { "type": "object" }
+                }
+            }]
+        }),
+        "function tool spec without name should fail config load",
+    )
+    .await?;
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("has a `function` spec that must include string field `name`")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_namespace_tool_spec_fails() -> std::io::Result<()> {
+    let err = load_builtin_context_lock_json_expect_err(
+        serde_json::json!({
+            "schema_version": 1,
+            "tools": [{
+                "id": TOOL_APPLY_PATCH_ID,
+                "enabled": true,
+                "spec": {
+                    "type": "namespace",
+                    "name": "apply_patch",
+                    "description": "Invalid for builtin lock.",
+                    "tools": []
+                }
+            }]
+        }),
+        "namespace tool spec should fail config load",
+    )
+    .await?;
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("must not use a namespace tool spec")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_unsupported_tool_spec_type_fails() -> std::io::Result<()> {
+    let err = load_builtin_context_lock_json_expect_err(
+        serde_json::json!({
+            "schema_version": 1,
+            "tools": [{
+                "id": TOOL_WEB_SEARCH_ID,
+                "enabled": true,
+                "spec": { "type": "browser_search" }
+            }]
+        }),
+        "unsupported tool spec type should fail config load",
+    )
+    .await?;
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("has unsupported tool spec type `browser_search`")
     );
     Ok(())
 }

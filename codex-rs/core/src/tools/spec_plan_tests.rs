@@ -271,44 +271,6 @@ fn builtin_context_lock_overrides_builtin_tool_description_and_keeps_handler_nam
 }
 
 #[test]
-#[should_panic(
-    expected = "builtin context lock id `builtin.tool.apply_patch` expected tool name `apply_patch` but lock payload names `not_apply_patch`"
-)]
-fn builtin_context_lock_tool_name_mismatch_errors() {
-    let model_info = model_info();
-    let features = Features::with_defaults();
-    let available_models = Vec::new();
-    let mut override_spec = create_apply_patch_freeform_tool(/*include_environment_id*/ false);
-    let ToolSpec::Freeform(tool) = &mut override_spec else {
-        panic!("expected apply_patch freeform tool");
-    };
-    tool.name = "not_apply_patch".to_string();
-    let tools_config = ToolsConfig::new(&ToolsConfigParams {
-        model_info: &model_info,
-        available_models: &available_models,
-        features: &features,
-        image_generation_tool_auth_allowed: true,
-        web_search_mode: Some(WebSearchMode::Cached),
-        session_source: SessionSource::Cli,
-        permission_profile: &PermissionProfile::Disabled,
-        windows_sandbox_level: WindowsSandboxLevel::Disabled,
-    })
-    .with_builtin_context_lock(Some(lock_with_tool_entry(ToolEntry {
-        id: TOOL_APPLY_PATCH_ID.to_string(),
-        enabled: true,
-        name: Some("not_apply_patch".to_string()),
-        spec: Some(serde_json::to_value(&override_spec).expect("serialize override spec")),
-    })));
-
-    let _ = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    );
-}
-
-#[test]
 fn builtin_context_lock_can_hide_all_default_builtin_tool_specs() {
     let model_info = model_info();
     let features = Features::with_defaults();
