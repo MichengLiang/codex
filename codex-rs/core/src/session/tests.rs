@@ -79,6 +79,45 @@ use codex_app_server_protocol::McpElicitationSchema;
 use codex_config::builtin_context_lock::BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID;
 use codex_config::builtin_context_lock::BaseInstructionsEntry;
 use codex_config::builtin_context_lock::BuiltinContextLock;
+use codex_config::builtin_context_lock::FRAGMENT_APPS_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_AVAILABLE_PLUGINS_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_AVAILABLE_SKILLS_SCAFFOLD_ID;
+use codex_config::builtin_context_lock::FRAGMENT_COLLABORATION_MODE_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_ENVIRONMENT_CONTEXT_ID;
+use codex_config::builtin_context_lock::FRAGMENT_MODEL_SWITCH_ID;
+use codex_config::builtin_context_lock::FRAGMENT_MULTI_AGENT_USAGE_HINT_ID;
+use codex_config::builtin_context_lock::FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_PERSONALITY_SPEC_ID;
+use codex_config::builtin_context_lock::FRAGMENT_REALTIME_START_ID;
+use codex_config::builtin_context_lock::FragmentEntry;
+use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
+use codex_config::builtin_context_lock::TOOL_CLOSE_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_CREATE_GOAL_ID;
+use codex_config::builtin_context_lock::TOOL_EXEC_COMMAND_ID;
+use codex_config::builtin_context_lock::TOOL_FOLLOWUP_TASK_ID;
+use codex_config::builtin_context_lock::TOOL_GET_GOAL_ID;
+use codex_config::builtin_context_lock::TOOL_IMAGE_GENERATION_ID;
+use codex_config::builtin_context_lock::TOOL_LIST_AGENTS_ID;
+use codex_config::builtin_context_lock::TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID;
+use codex_config::builtin_context_lock::TOOL_LIST_MCP_RESOURCES_ID;
+use codex_config::builtin_context_lock::TOOL_LOCAL_SHELL_ID;
+use codex_config::builtin_context_lock::TOOL_READ_MCP_RESOURCE_ID;
+use codex_config::builtin_context_lock::TOOL_REPORT_AGENT_JOB_RESULT_ID;
+use codex_config::builtin_context_lock::TOOL_REQUEST_PERMISSIONS_ID;
+use codex_config::builtin_context_lock::TOOL_REQUEST_USER_INPUT_ID;
+use codex_config::builtin_context_lock::TOOL_RESUME_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_SEND_INPUT_ID;
+use codex_config::builtin_context_lock::TOOL_SEND_MESSAGE_ID;
+use codex_config::builtin_context_lock::TOOL_SHELL_ID;
+use codex_config::builtin_context_lock::TOOL_SPAWN_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_SPAWN_AGENTS_ON_CSV_ID;
+use codex_config::builtin_context_lock::TOOL_UPDATE_GOAL_ID;
+use codex_config::builtin_context_lock::TOOL_UPDATE_PLAN_ID;
+use codex_config::builtin_context_lock::TOOL_VIEW_IMAGE_ID;
+use codex_config::builtin_context_lock::TOOL_WAIT_AGENT_ID;
+use codex_config::builtin_context_lock::TOOL_WEB_SEARCH_ID;
+use codex_config::builtin_context_lock::TOOL_WRITE_STDIN_ID;
+use codex_config::builtin_context_lock::ToolEntry;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_execpolicy::Decision;
@@ -1314,6 +1353,119 @@ async fn config_with_base_lock_entry(
         templates: BTreeMap::new(),
     });
     config
+}
+
+async fn make_session_and_context_with_fragment_entries(
+    fragments: Vec<FragmentEntry>,
+) -> (Arc<Session>, Arc<TurnContext>) {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.builtin_context_lock = Some(lock_with_fragments(fragments));
+        },
+    )
+    .await;
+    (session, turn_context)
+}
+
+fn disabled_fragment(id: &str) -> FragmentEntry {
+    FragmentEntry {
+        id: id.to_string(),
+        enabled: false,
+        content: None,
+    }
+}
+
+fn content_fragment(id: &str, content: &str) -> FragmentEntry {
+    FragmentEntry {
+        id: id.to_string(),
+        enabled: true,
+        content: Some(content.to_string()),
+    }
+}
+
+fn lock_with_fragments(fragments: Vec<FragmentEntry>) -> BuiltinContextLock {
+    BuiltinContextLock {
+        path: test_path_buf("/tmp/builtin-context.lock.json").abs(),
+        schema_version: 1,
+        base_instructions: BTreeMap::new(),
+        fragments: fragments
+            .into_iter()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect(),
+        tools: BTreeMap::new(),
+        templates: BTreeMap::new(),
+    }
+}
+
+fn pure_mode_lock() -> BuiltinContextLock {
+    let mut lock = lock_with_fragments(vec![
+        disabled_fragment(FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID),
+        disabled_fragment(FRAGMENT_COLLABORATION_MODE_INSTRUCTIONS_ID),
+        disabled_fragment(FRAGMENT_MODEL_SWITCH_ID),
+        disabled_fragment(FRAGMENT_REALTIME_START_ID),
+        disabled_fragment(FRAGMENT_PERSONALITY_SPEC_ID),
+        disabled_fragment(FRAGMENT_APPS_INSTRUCTIONS_ID),
+        disabled_fragment(FRAGMENT_AVAILABLE_SKILLS_SCAFFOLD_ID),
+        disabled_fragment(FRAGMENT_AVAILABLE_PLUGINS_INSTRUCTIONS_ID),
+        disabled_fragment(FRAGMENT_ENVIRONMENT_CONTEXT_ID),
+        disabled_fragment(FRAGMENT_MULTI_AGENT_USAGE_HINT_ID),
+    ]);
+    lock.base_instructions.insert(
+        BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID.to_string(),
+        BaseInstructionsEntry {
+            id: BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID.to_string(),
+            enabled: true,
+            content: Some("You are a helpful assistant.".to_string()),
+        },
+    );
+    lock.tools = disabled_tool_entries(&[
+        TOOL_EXEC_COMMAND_ID,
+        TOOL_WRITE_STDIN_ID,
+        TOOL_SHELL_ID,
+        TOOL_LOCAL_SHELL_ID,
+        TOOL_APPLY_PATCH_ID,
+        TOOL_UPDATE_PLAN_ID,
+        TOOL_REQUEST_USER_INPUT_ID,
+        TOOL_REQUEST_PERMISSIONS_ID,
+        TOOL_LIST_MCP_RESOURCES_ID,
+        TOOL_LIST_MCP_RESOURCE_TEMPLATES_ID,
+        TOOL_READ_MCP_RESOURCE_ID,
+        TOOL_GET_GOAL_ID,
+        TOOL_CREATE_GOAL_ID,
+        TOOL_UPDATE_GOAL_ID,
+        TOOL_SPAWN_AGENT_ID,
+        TOOL_SEND_INPUT_ID,
+        TOOL_SEND_MESSAGE_ID,
+        TOOL_FOLLOWUP_TASK_ID,
+        TOOL_RESUME_AGENT_ID,
+        TOOL_WAIT_AGENT_ID,
+        TOOL_CLOSE_AGENT_ID,
+        TOOL_LIST_AGENTS_ID,
+        TOOL_SPAWN_AGENTS_ON_CSV_ID,
+        TOOL_REPORT_AGENT_JOB_RESULT_ID,
+        TOOL_VIEW_IMAGE_ID,
+        TOOL_WEB_SEARCH_ID,
+        TOOL_IMAGE_GENERATION_ID,
+    ]);
+    lock
+}
+
+fn disabled_tool_entries(ids: &[&str]) -> BTreeMap<String, ToolEntry> {
+    ids.iter()
+        .map(|id| {
+            (
+                (*id).to_string(),
+                ToolEntry {
+                    id: (*id).to_string(),
+                    enabled: false,
+                    name: None,
+                    spec: None,
+                },
+            )
+        })
+        .collect()
 }
 
 fn model_info_with_base_instructions(base_instructions: &str) -> ModelInfo {
@@ -6357,6 +6509,39 @@ async fn build_initial_context_omits_git_attribution_when_feature_is_disabled() 
 }
 
 #[tokio::test]
+async fn builtin_context_lock_does_not_suppress_extension_context_contributors() {
+    let (mut session, mut turn_context) = make_session_and_context().await;
+    session.services.extensions = git_attribution_test_registry();
+    session
+        .services
+        .thread_extension_data
+        .insert(GitAttributionTestState);
+    let mut config = turn_context.config.as_ref().clone();
+    config.builtin_context_lock = Some(lock_with_fragments(vec![
+        disabled_fragment(FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID),
+        disabled_fragment(FRAGMENT_ENVIRONMENT_CONTEXT_ID),
+    ]));
+    turn_context.config = Arc::new(config);
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_messages = developer_message_texts(&initial_context);
+
+    assert!(
+        developer_messages
+            .iter()
+            .flatten()
+            .any(|text| *text == "git attribution extension enabled"),
+        "extension context contributors must remain external to builtin context lock, got {developer_messages:?}"
+    );
+    assert!(
+        !developer_input_texts(&initial_context)
+            .iter()
+            .any(|text| text.contains("<permissions instructions>")),
+        "sanity check: builtin fragment lock should still apply"
+    );
+}
+
+#[tokio::test]
 async fn build_initial_context_adds_multi_agent_v2_root_usage_hint_as_developer_message() {
     let (session, turn_context) =
         make_multi_agent_v2_usage_hint_test_session(/*enable_multi_agent_v2*/ true).await;
@@ -6467,6 +6652,194 @@ async fn configured_multi_agent_v2_usage_hint_texts_omit_effectively_disabled_fe
     let hint_texts = session.configured_multi_agent_v2_usage_hint_texts().await;
 
     assert_eq!(hint_texts, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn builtin_context_lock_disables_permissions_fragment() {
+    let (session, turn_context) =
+        make_session_and_context_with_fragment_entries(vec![disabled_fragment(
+            FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID,
+        )])
+        .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("<permissions instructions>")),
+        "did not expect permissions instructions when disabled, got {developer_texts:?}"
+    );
+    assert!(
+        user_input_texts(&initial_context)
+            .iter()
+            .any(|text| text.contains("<environment_context>")),
+        "unmanaged environment context should remain"
+    );
+}
+
+#[tokio::test]
+async fn builtin_context_lock_overrides_permissions_fragment_content() {
+    let (session, turn_context) =
+        make_session_and_context_with_fragment_entries(vec![content_fragment(
+            FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID,
+            "locked permissions content",
+        )])
+        .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("locked permissions content")),
+        "expected locked permissions content, got {developer_texts:?}"
+    );
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("<permissions instructions>")),
+        "lock content should replace the original rendered permissions fragment"
+    );
+}
+
+#[tokio::test]
+async fn builtin_context_lock_disables_environment_context_fragment() {
+    let (session, turn_context) =
+        make_session_and_context_with_fragment_entries(vec![disabled_fragment(
+            FRAGMENT_ENVIRONMENT_CONTEXT_ID,
+        )])
+        .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let user_texts = user_input_texts(&initial_context);
+
+    assert!(
+        !user_texts
+            .iter()
+            .any(|text| text.contains("<environment_context>")),
+        "did not expect environment context when disabled, got {user_texts:?}"
+    );
+    assert!(
+        developer_input_texts(&initial_context)
+            .iter()
+            .any(|text| text.contains("<permissions instructions>")),
+        "unmanaged permissions instructions should remain"
+    );
+}
+
+#[tokio::test]
+async fn no_builtin_context_lock_preserves_initial_context_fragments() {
+    let (session, turn_context) = make_session_and_context().await;
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+
+    assert!(
+        developer_input_texts(&initial_context)
+            .iter()
+            .any(|text| text.contains("<permissions instructions>")),
+        "expected default permissions instructions"
+    );
+    assert!(
+        user_input_texts(&initial_context)
+            .iter()
+            .any(|text| text.contains("<environment_context>")),
+        "expected default environment context"
+    );
+}
+
+#[tokio::test]
+async fn builtin_context_lock_does_not_suppress_project_user_instructions() {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.user_instructions = Some("project AGENTS instructions stay visible".into());
+            config.builtin_context_lock = Some(lock_with_fragments(vec![
+                disabled_fragment(FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID),
+                disabled_fragment(FRAGMENT_ENVIRONMENT_CONTEXT_ID),
+            ]));
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let user_texts = user_input_texts(&initial_context);
+
+    assert!(
+        user_texts
+            .iter()
+            .any(|text| text.contains("project AGENTS instructions stay visible")),
+        "user instructions must remain external to builtin context lock, got {user_texts:?}"
+    );
+    assert!(
+        !developer_input_texts(&initial_context)
+            .iter()
+            .any(|text| text.contains("<permissions instructions>")),
+        "sanity check: builtin fragment lock should still apply"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn builtin_context_lock_pure_mode_request_has_simple_instructions_user_message_and_no_builtin_fragments()
+-> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+    )
+    .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.builtin_context_lock = Some(pure_mode_lock());
+    });
+    let test = builder.build(&server).await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "hello pure mode".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = response_mock.single_request();
+    let body = request.body_json();
+    assert_eq!(
+        body["instructions"].as_str(),
+        Some("You are a helpful assistant.")
+    );
+    assert_eq!(
+        body["tools"]
+            .as_array()
+            .expect("tools should be serialized as an array"),
+        &Vec::<serde_json::Value>::new()
+    );
+    assert!(
+        request.body_contains_text("hello pure mode"),
+        "request input should include the user message"
+    );
+    for builtin_fragment in [
+        "<permissions instructions>",
+        "<collaboration_mode>",
+        "<environment_context>",
+        "<available_skills>",
+        "<available_plugins>",
+        "<apps_instructions>",
+    ] {
+        assert!(
+            !request.body_contains_text(builtin_fragment),
+            "pure mode request should not contain builtin fragment marker {builtin_fragment}"
+        );
+    }
+
+    Ok(())
 }
 
 #[tokio::test]

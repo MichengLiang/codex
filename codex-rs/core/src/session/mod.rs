@@ -49,6 +49,17 @@ use codex_analytics::SubAgentThreadStartedInput;
 use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_config::builtin_context_lock::BaseInstructionsDecision;
+use codex_config::builtin_context_lock::FRAGMENT_APPS_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_AVAILABLE_PLUGINS_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_AVAILABLE_SKILLS_SCAFFOLD_ID;
+use codex_config::builtin_context_lock::FRAGMENT_COLLABORATION_MODE_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_ENVIRONMENT_CONTEXT_ID;
+use codex_config::builtin_context_lock::FRAGMENT_MODEL_SWITCH_ID;
+use codex_config::builtin_context_lock::FRAGMENT_MULTI_AGENT_USAGE_HINT_ID;
+use codex_config::builtin_context_lock::FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID;
+use codex_config::builtin_context_lock::FRAGMENT_PERSONALITY_SPEC_ID;
+use codex_config::builtin_context_lock::FRAGMENT_REALTIME_START_ID;
+use codex_config::builtin_context_lock::FragmentDecision;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
@@ -103,9 +114,13 @@ use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
+use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::RawResponseItemEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadSource;
@@ -799,6 +814,35 @@ impl Codex {
     pub(crate) fn enabled(&self, feature: Feature) -> bool {
         self.session.enabled(feature)
     }
+}
+
+fn push_builtin_fragment(
+    lock: Option<&codex_config::builtin_context_lock::BuiltinContextLock>,
+    id: &str,
+    default_text: String,
+    sections: &mut Vec<String>,
+) {
+    match lock.map(|lock| lock.fragment_decision(id)) {
+        Some(FragmentDecision::Disable) => {}
+        Some(FragmentDecision::UseContent(content)) => sections.push(content.to_string()),
+        Some(FragmentDecision::UseOriginal) | None => sections.push(default_text),
+    }
+}
+
+fn locked_external_list_fragment(
+    open_tag: &str,
+    close_tag: &str,
+    lines: &[String],
+) -> Option<String> {
+    (!lines.is_empty()).then(|| format!("{open_tag}\n{}\n{close_tag}", lines.join("\n")))
+}
+
+fn builtin_fragment_decision<'a>(
+    lock: Option<&'a codex_config::builtin_context_lock::BuiltinContextLock>,
+    id: &str,
+) -> FragmentDecision<'a> {
+    lock.map(|lock| lock.fragment_decision(id))
+        .unwrap_or(FragmentDecision::UseOriginal)
 }
 
 fn resolve_session_base_instructions(
@@ -2602,10 +2646,17 @@ impl Session {
                 turn_context,
             )
         {
-            developer_sections.push(model_switch_message);
+            push_builtin_fragment(
+                turn_context.config.builtin_context_lock.as_ref(),
+                FRAGMENT_MODEL_SWITCH_ID,
+                model_switch_message,
+                &mut developer_sections,
+            );
         }
         if turn_context.config.include_permissions_instructions {
-            developer_sections.push(
+            push_builtin_fragment(
+                turn_context.config.builtin_context_lock.as_ref(),
+                FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID,
                 PermissionsInstructions::from_permission_profile(
                     &turn_context.permission_profile,
                     turn_context.approval_policy.value(),
@@ -2620,6 +2671,7 @@ impl Session {
                         .enabled(Feature::RequestPermissionsTool),
                 )
                 .render(),
+                &mut developer_sections,
             );
         }
         let separate_guardian_developer_message =
@@ -2644,14 +2696,24 @@ impl Session {
         if let Some(collab_instructions) =
             CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
         {
-            developer_sections.push(collab_instructions.render());
+            push_builtin_fragment(
+                turn_context.config.builtin_context_lock.as_ref(),
+                FRAGMENT_COLLABORATION_MODE_INSTRUCTIONS_ID,
+                collab_instructions.render(),
+                &mut developer_sections,
+            );
         }
         if let Some(realtime_update) = crate::context_manager::updates::build_initial_realtime_item(
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),
             turn_context,
         ) {
-            developer_sections.push(realtime_update);
+            push_builtin_fragment(
+                turn_context.config.builtin_context_lock.as_ref(),
+                FRAGMENT_REALTIME_START_ID,
+                realtime_update,
+                &mut developer_sections,
+            );
         }
         if self.features.enabled(Feature::Personality)
             && let Some(personality) = turn_context.personality
@@ -2666,8 +2728,12 @@ impl Session {
                         personality,
                     )
             {
-                developer_sections
-                    .push(PersonalitySpecInstructions::new(personality_message).render());
+                push_builtin_fragment(
+                    turn_context.config.builtin_context_lock.as_ref(),
+                    FRAGMENT_PERSONALITY_SPEC_ID,
+                    PersonalitySpecInstructions::new(personality_message).render(),
+                    &mut developer_sections,
+                );
             }
         }
         if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
@@ -2681,7 +2747,12 @@ impl Session {
             if let Some(apps_instructions) =
                 AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
             {
-                developer_sections.push(apps_instructions.render());
+                push_builtin_fragment(
+                    turn_context.config.builtin_context_lock.as_ref(),
+                    FRAGMENT_APPS_INSTRUCTIONS_ID,
+                    apps_instructions.render(),
+                    &mut developer_sections,
+                );
             }
         }
         if turn_context.config.include_skill_instructions {
@@ -2694,6 +2765,7 @@ impl Session {
             );
             if let Some(available_skills) = available_skills {
                 let warning_message = available_skills.warning_message.clone();
+                let skill_lines = available_skills.skill_lines.clone();
                 let skills_instructions = AvailableSkillsInstructions::from(available_skills);
                 if let Some(warning_message) = warning_message {
                     self.send_event_raw(Event {
@@ -2704,7 +2776,26 @@ impl Session {
                     })
                     .await;
                 }
-                developer_sections.push(skills_instructions.render());
+                match builtin_fragment_decision(
+                    turn_context.config.builtin_context_lock.as_ref(),
+                    FRAGMENT_AVAILABLE_SKILLS_SCAFFOLD_ID,
+                ) {
+                    FragmentDecision::Disable => {
+                        if let Some(skills_fragment) = locked_external_list_fragment(
+                            SKILLS_INSTRUCTIONS_OPEN_TAG,
+                            SKILLS_INSTRUCTIONS_CLOSE_TAG,
+                            &skill_lines,
+                        ) {
+                            developer_sections.push(skills_fragment);
+                        }
+                    }
+                    FragmentDecision::UseContent(content) => {
+                        developer_sections.push(content.to_string());
+                    }
+                    FragmentDecision::UseOriginal => {
+                        developer_sections.push(skills_instructions.render());
+                    }
+                }
             }
         }
         let loaded_plugins = self
@@ -2712,10 +2803,39 @@ impl Session {
             .plugins_manager
             .plugins_for_config(&turn_context.config.plugins_config_input())
             .await;
+        let plugin_summaries = loaded_plugins.capability_summaries();
         if let Some(plugin_instructions) =
-            AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
+            AvailablePluginsInstructions::from_plugins(plugin_summaries)
         {
-            developer_sections.push(plugin_instructions.render());
+            match builtin_fragment_decision(
+                turn_context.config.builtin_context_lock.as_ref(),
+                FRAGMENT_AVAILABLE_PLUGINS_INSTRUCTIONS_ID,
+            ) {
+                FragmentDecision::Disable => {
+                    let lines = plugin_summaries
+                        .iter()
+                        .map(|plugin| match plugin.description.as_deref() {
+                            Some(description) => {
+                                format!("- `{}`: {description}", plugin.display_name)
+                            }
+                            None => format!("- `{}`", plugin.display_name),
+                        })
+                        .collect::<Vec<_>>();
+                    if let Some(plugins_fragment) = locked_external_list_fragment(
+                        PLUGINS_INSTRUCTIONS_OPEN_TAG,
+                        PLUGINS_INSTRUCTIONS_CLOSE_TAG,
+                        &lines,
+                    ) {
+                        developer_sections.push(plugins_fragment);
+                    }
+                }
+                FragmentDecision::UseContent(content) => {
+                    developer_sections.push(content.to_string());
+                }
+                FragmentDecision::UseOriginal => {
+                    developer_sections.push(plugin_instructions.render());
+                }
+            }
         }
         for contributor in self.services.extensions.context_contributors() {
             for fragment in contributor.contribute(
@@ -2751,10 +2871,13 @@ impl Session {
                 .agent_control
                 .format_environment_context_subagents(self.conversation_id)
                 .await;
-            contextual_user_sections.push(
+            push_builtin_fragment(
+                turn_context.config.builtin_context_lock.as_ref(),
+                FRAGMENT_ENVIRONMENT_CONTEXT_ID,
                 crate::context::EnvironmentContext::from_turn_context(turn_context, shell.as_ref())
                     .with_subagents(subagents)
                     .render(),
+                &mut contextual_user_sections,
             );
         }
 
@@ -2775,10 +2898,31 @@ impl Session {
             }
         }
         if let Some(usage_hint_text) = multi_agent_v2_usage_hint_text
+            && !matches!(
+                turn_context
+                    .config
+                    .builtin_context_lock
+                    .as_ref()
+                    .map(|lock| lock.fragment_decision(FRAGMENT_MULTI_AGENT_USAGE_HINT_ID)),
+                Some(FragmentDecision::Disable)
+            )
             && let Some(usage_hint_message) =
-                crate::context_manager::updates::build_developer_update_item(vec![
-                    usage_hint_text.to_string(),
-                ])
+                crate::context_manager::updates::build_developer_update_item(
+                    match turn_context
+                        .config
+                        .builtin_context_lock
+                        .as_ref()
+                        .map(|lock| lock.fragment_decision(FRAGMENT_MULTI_AGENT_USAGE_HINT_ID))
+                    {
+                        Some(FragmentDecision::UseContent(content)) => vec![content.to_string()],
+                        Some(FragmentDecision::UseOriginal) | None => {
+                            vec![usage_hint_text.to_string()]
+                        }
+                        Some(FragmentDecision::Disable) => {
+                            unreachable!("disabled usage hint was filtered")
+                        }
+                    },
+                )
         {
             items.push(usage_hint_message);
         }

@@ -35,19 +35,32 @@ pub const TOOL_REPORT_AGENT_JOB_RESULT_ID: &str = "builtin.tool.report_agent_job
 pub const TOOL_VIEW_IMAGE_ID: &str = "builtin.tool.view_image";
 pub const TOOL_WEB_SEARCH_ID: &str = "builtin.tool.web_search";
 pub const TOOL_IMAGE_GENERATION_ID: &str = "builtin.tool.image_generation";
+pub const FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID: &str = "builtin.fragment.permissions_instructions";
+pub const FRAGMENT_COLLABORATION_MODE_INSTRUCTIONS_ID: &str =
+    "builtin.fragment.collaboration_mode_instructions";
+pub const FRAGMENT_MODEL_SWITCH_ID: &str = "builtin.fragment.model_switch";
+pub const FRAGMENT_REALTIME_START_ID: &str = "builtin.fragment.realtime_start";
+pub const FRAGMENT_PERSONALITY_SPEC_ID: &str = "builtin.fragment.personality_spec";
+pub const FRAGMENT_APPS_INSTRUCTIONS_ID: &str = "builtin.fragment.apps_instructions";
+pub const FRAGMENT_AVAILABLE_SKILLS_SCAFFOLD_ID: &str =
+    "builtin.fragment.available_skills_scaffold";
+pub const FRAGMENT_AVAILABLE_PLUGINS_INSTRUCTIONS_ID: &str =
+    "builtin.fragment.available_plugins_instructions";
+pub const FRAGMENT_ENVIRONMENT_CONTEXT_ID: &str = "builtin.fragment.environment_context";
+pub const FRAGMENT_MULTI_AGENT_USAGE_HINT_ID: &str = "builtin.fragment.multi_agent_usage_hint";
 
 const KNOWN_BASE_INSTRUCTIONS_IDS: &[&str] = &[BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID];
 const KNOWN_FRAGMENT_IDS: &[&str] = &[
-    "builtin.fragment.permissions_instructions",
-    "builtin.fragment.collaboration_mode_instructions",
-    "builtin.fragment.model_switch",
-    "builtin.fragment.realtime_start",
-    "builtin.fragment.personality_spec",
-    "builtin.fragment.apps_instructions",
-    "builtin.fragment.available_skills_scaffold",
-    "builtin.fragment.available_plugins_instructions",
-    "builtin.fragment.environment_context",
-    "builtin.fragment.multi_agent_usage_hint",
+    FRAGMENT_PERMISSIONS_INSTRUCTIONS_ID,
+    FRAGMENT_COLLABORATION_MODE_INSTRUCTIONS_ID,
+    FRAGMENT_MODEL_SWITCH_ID,
+    FRAGMENT_REALTIME_START_ID,
+    FRAGMENT_PERSONALITY_SPEC_ID,
+    FRAGMENT_APPS_INSTRUCTIONS_ID,
+    FRAGMENT_AVAILABLE_SKILLS_SCAFFOLD_ID,
+    FRAGMENT_AVAILABLE_PLUGINS_INSTRUCTIONS_ID,
+    FRAGMENT_ENVIRONMENT_CONTEXT_ID,
+    FRAGMENT_MULTI_AGENT_USAGE_HINT_ID,
 ];
 const KNOWN_TOOL_IDS: &[&str] = &[
     TOOL_EXEC_COMMAND_ID,
@@ -157,6 +170,12 @@ pub enum BaseInstructionsDecision<'a> {
     Unmanaged,
 }
 
+pub enum FragmentDecision<'a> {
+    UseOriginal,
+    UseContent(&'a str),
+    Disable,
+}
+
 #[derive(Debug, Deserialize)]
 struct LockFile {
     schema_version: u32,
@@ -219,6 +238,21 @@ impl BuiltinContextLock {
                 .as_deref()
                 .expect("enabled base instructions lock entries are validated during parsing"),
         )
+    }
+
+    pub fn fragment_decision(&self, id: &str) -> FragmentDecision<'_> {
+        let Some(entry) = self.fragments.get(id) else {
+            return FragmentDecision::UseOriginal;
+        };
+
+        if !entry.enabled {
+            return FragmentDecision::Disable;
+        }
+
+        match entry.content.as_deref() {
+            Some(content) => FragmentDecision::UseContent(content),
+            None => FragmentDecision::UseOriginal,
+        }
     }
 
     fn from_lock_file(
