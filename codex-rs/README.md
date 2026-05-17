@@ -26,25 +26,6 @@ The Rust implementation is now the maintained Codex CLI and serves as the defaul
 
 Codex supports a rich set of configuration options. Note that the Rust CLI uses `config.toml` instead of `config.json`. See [`docs/config.md`](../docs/config.md) for details.
 
-### Builtin Context Lock
-
-Builtin Context Lock lets a project replace or suppress Codex's built-in model-visible context while keeping the Codex runtime. A lock file can override the built-in base instructions, disable built-in context fragments, and disable or edit built-in tool specs. User messages, AGENTS.md, MCP servers, skills, plugins, conversation history, provider selection, and authentication remain controlled by their existing mechanisms.
-
-Configure a project-level lock path in `config.toml`:
-
-```toml
-[builtin_context_lock]
-path = ".codex/builtin-context.lock.json"
-```
-
-Generate the current built-in catalog with:
-
-```shell
-codex builtin-context-lock generate --output .codex/builtin-context.lock.json
-```
-
-Edit the generated JSON to set `enabled = false` for built-in entries that should be hidden from the model, or replace enabled entry content/specs with project-specific text. See the [Builtin Context Lock guide](../micheng/Builtin%20Context%20Lock/使用指南.md) for the pure Responses-style setup and black-box verification workflow.
-
 ### Model Context Protocol Support
 
 #### MCP client

@@ -118,6 +118,29 @@ The contract covers directly exposed tools from user-configured MCP servers. It 
 
 See [`micheng/Codex MCP Text Contract/`](<micheng/Codex MCP Text Contract/>) for the full contract, implementation status, and verification notes.
 
+## Builtin Context Lock
+
+Builtin Context Lock is a project-level override for Codex's built-in model-visible context. A lock file can replace the built-in base instructions, suppress built-in context fragments, and suppress or edit built-in tool specs while preserving the Codex runtime for provider selection, authentication, streaming, session storage, and tool-call execution.
+
+The lock applies only to Codex built-ins. User messages, AGENTS.md, MCP servers, skills, plugins, conversation history, model replies, provider configuration, and authentication remain controlled by their existing mechanisms.
+
+Enable a lock file from `config.toml`:
+
+```toml
+[builtin_context_lock]
+path = ".codex/builtin-context.lock.json"
+```
+
+Generate the current built-in catalog:
+
+```shell
+codex builtin-context-lock generate --output .codex/builtin-context.lock.json
+```
+
+Each generated entry is managed by stable `id` plus `enabled` state. An enabled entry uses its lock payload; a disabled entry is hidden from the model; a missing entry falls back to Codex's built-in behavior. Tool entries keep their original tool names and handler routing.
+
+See [`micheng/Builtin Context Lock/`](<micheng/Builtin Context Lock/>) for the design document, implementation plan, usage guide, and black-box verification workflow.
+
 ## Docs
 
 - [**Codex Documentation**](https://developers.openai.com/codex)
