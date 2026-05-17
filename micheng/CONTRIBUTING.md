@@ -15,7 +15,7 @@
 
 - `upstream/main` 是官方基线，只从官方仓库拉取。
 - `origin` 是个人 fork，只保存个人分支和个人提交。
-- `main` 只镜像官方 `upstream/main`，不直接开发个人功能。
+- `main` 是个人 fork 主线，只接收已经开放完成并适合日常使用的个人改动。
 - 个人功能必须落在 `custom/*` 或 `feature/*` 分支上。
 - 已推送并长期维护的个人分支优先使用 merge 同步官方更新，避免重写公开历史。
 - 需要重写历史时只使用 `--force-with-lease`，不得使用裸 `--force`。
@@ -23,17 +23,17 @@
 ## 分支职责
 
 ```text
-main                      -> 官方 main 的本地镜像
+main                      -> 个人 fork 主线
 custom/micheng            -> 个人定制基线或长期汇总分支
 feature/mcp-text-contract -> MCP Text Contract 功能维护分支
 custom/* 或 feature/*     -> 按主题维护的个人功能分支
 ```
 
-`main` 的唯一职责是跟踪官方代码。它可以被重置到 `upstream/main`，但不接收个人功能提交。
+`main` 的职责是作为个人 fork 的稳定入口。它应持续从官方 `upstream/main` 同步基线，但个人功能只有在主题分支已经验证并准备开放使用后才合入。
 
 `custom/micheng` 用作个人定制方向的汇总入口。稳定的个人改动可以合入该分支。
 
-`feature/mcp-text-contract` 用于维护 MCP Text Contract。该分支是当前重点功能分支，应持续保留可测试、可推送、可同步官方的状态。
+`feature/mcp-text-contract` 用于维护 MCP Text Contract 的历史实现线。功能开放完成并合入 `origin/main` 后，该分支不再是日常开发入口；后续 MCP 修补可从 `main` 另起主题分支。
 
 ## 同步官方上游
 
@@ -49,13 +49,15 @@ git status --short
 git fetch upstream --prune
 ```
 
-如果只需要更新本地 `main` 镜像：
+如果只需要把个人 fork 主线推进到官方最新基线：
 
 ```bash
 git switch main
-git reset --hard upstream/main
+git merge upstream/main
 git push origin main
 ```
+
+如果需要丢弃 fork 主线上的个人提交并重新变成纯官方镜像，必须先明确这是有意的破坏性整理，再使用 `git reset --hard upstream/main`。
 
 如果需要把官方更新合入个人功能分支：
 

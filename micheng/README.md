@@ -26,17 +26,17 @@ origin   -> git@github.com:MichengLiang/codex.git
 当前维护结构包含这些分支角色：
 
 ```text
-main                      -> 官方 main 的本地镜像
+main                      -> 个人 fork 主线
 custom/micheng            -> 个人定制基线或长期汇总分支
 feature/mcp-text-contract -> MCP Text Contract 功能维护分支
 custom/* 或 feature/*     -> 按主题维护的个人功能分支
 ```
 
-`main` 只用于对齐官方 `upstream/main`，不承载个人功能开发。
+`main` 是个人 fork 的主线，保存已经开放完成并适合继续日常使用的个人改动。同步官方时仍以 `upstream/main` 为上游基线，但不要把未完成主题开发直接堆在 `main` 上。
 
 `custom/micheng` 保存个人定制方向的基线和汇总入口。
 
-`feature/mcp-text-contract` 是当前 MCP Text Contract 的主要维护分支。该分支在官方 `main` 之上叠加个人功能提交，并通过 `origin/feature/mcp-text-contract` 保存远端状态。
+`feature/mcp-text-contract` 是 MCP Text Contract 的历史功能分支。功能开放完成后已经合并进 `origin/main`，后续可按需保留或删除远端分支引用。
 
 ## 文档索引
 
@@ -58,12 +58,19 @@ rmcp-counter-reference.md           -> rmcp 参考实验记录
 local-release-build.md -> 本地日用 release 构建、codex-micheng 安装名和 target 清理约定
 ```
 
-## 当前基线
-
-整理完成时，官方基线为：
+后续功能设计资料：
 
 ```text
-35aaa5d9fc Bound websocket request sends with idle timeout (#20751)
+Codex 原生文件阅读与文件上下文展开工具规格.md -> 原生 read_file 与 load_files_context 规格
+关于上下文调试器.md                         -> Runtime Context Control Plane 设计草案
 ```
 
-当前 MCP Text Contract 功能分支在该官方基线之上维护个人提交。后续同步官方时，以 `upstream/main` 的实际提交为准。
+## 当前基线
+
+MCP Text Contract 合并到 fork 主线后，当前 `origin/main` 顶端为：
+
+```text
+b245f5f2c7 32
+```
+
+该提交包含已经开放完成的 MCP Text Contract 功能分支状态。后续同步官方时，以 `upstream/main` 的实际提交为准。
