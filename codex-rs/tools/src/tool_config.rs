@@ -16,6 +16,7 @@ use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -127,6 +128,20 @@ pub struct ToolsConfig {
     pub agent_jobs_tools: bool,
     pub agent_jobs_worker_tools: bool,
     pub agent_type_description: String,
+    pub builtin_context_lock_tools: Option<BuiltinContextLockTools>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuiltinContextLockTools {
+    pub tools: Vec<BuiltinContextLockToolEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuiltinContextLockToolEntry {
+    pub id: String,
+    pub enabled: bool,
+    pub name: Option<String>,
+    pub spec: Option<JsonValue>,
 }
 
 pub struct ToolsConfigParams<'a> {
@@ -264,7 +279,13 @@ impl ToolsConfig {
             agent_jobs_tools: include_agent_jobs,
             agent_jobs_worker_tools,
             agent_type_description: String::new(),
+            builtin_context_lock_tools: None,
         }
+    }
+
+    pub fn with_builtin_context_lock(mut self, lock: Option<BuiltinContextLockTools>) -> Self {
+        self.builtin_context_lock_tools = lock;
+        self
     }
 
     pub fn with_agent_type_description(mut self, agent_type_description: String) -> Self {

@@ -579,13 +579,28 @@ impl ToolRegistryBuilder {
     where
         H: ToolHandler + 'static,
     {
+        let spec = handler.spec();
+        self.register_handler_with_optional_spec(handler, spec);
+    }
+
+    pub(crate) fn register_handler_with_spec_override<H>(&mut self, handler: Arc<H>, spec: ToolSpec)
+    where
+        H: ToolHandler + 'static,
+    {
+        self.register_handler_with_optional_spec(handler, Some(spec));
+    }
+
+    fn register_handler_with_optional_spec<H>(&mut self, handler: Arc<H>, spec: Option<ToolSpec>)
+    where
+        H: ToolHandler + 'static,
+    {
         let name = handler.tool_name();
         if self.handlers.contains_key(&name) {
             error_or_panic(format!("handler for tool {name} already registered"));
             return;
         }
 
-        if let Some(spec) = handler.spec() {
+        if let Some(spec) = spec {
             self.push_spec(spec);
         }
 

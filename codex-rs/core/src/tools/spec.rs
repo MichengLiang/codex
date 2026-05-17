@@ -9,10 +9,13 @@ use crate::tools::registry::ToolRegistryBuilder;
 use crate::tools::spec_plan::build_tool_registry_builder;
 use crate::tools::spec_plan_types::ToolNamespace;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
+use codex_config::builtin_context_lock::BuiltinContextLock;
 use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_tool_api::ToolBundle as ExtensionToolBundle;
 use codex_tools::AdditionalProperties;
+use codex_tools::BuiltinContextLockToolEntry;
+use codex_tools::BuiltinContextLockTools;
 use codex_tools::DiscoverableTool;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -31,6 +34,23 @@ pub(crate) fn tool_user_shell_type(user_shell: &Shell) -> ToolUserShellType {
         ShellType::Sh => ToolUserShellType::Sh,
         ShellType::Cmd => ToolUserShellType::Cmd,
     }
+}
+
+pub(crate) fn builtin_context_lock_tools_config(
+    lock: Option<&BuiltinContextLock>,
+) -> Option<BuiltinContextLockTools> {
+    lock.map(|lock| BuiltinContextLockTools {
+        tools: lock
+            .tools
+            .values()
+            .map(|entry| BuiltinContextLockToolEntry {
+                id: entry.id.clone(),
+                enabled: entry.enabled,
+                name: entry.name.clone(),
+                spec: entry.spec.clone(),
+            })
+            .collect(),
+    })
 }
 
 struct McpToolPlanInputs {

@@ -25,8 +25,12 @@ use crate::tools::handlers::shell_spec::request_permissions_tool_description;
 use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
 use crate::tools::handlers::view_image_spec::create_view_image_tool;
 use crate::tools::registry::ToolRegistry;
+use crate::tools::router::ToolRouter;
+use crate::tools::router::ToolRouterParams;
 use crate::tools::spec_plan_types::ToolNamespace;
 use codex_app_server_protocol::AppInfo;
+use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
+use codex_config::builtin_context_lock::ToolEntry;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_mcp::ToolInfo;
@@ -47,6 +51,8 @@ use codex_tool_api::ToolBundle as ExtensionToolBundle;
 use codex_tool_api::ToolExecutor;
 use codex_tool_api::ToolFuture;
 use codex_tools::AdditionalProperties;
+use codex_tools::BuiltinContextLockToolEntry;
+use codex_tools::BuiltinContextLockTools;
 use codex_tools::DiscoverablePluginInfo;
 use codex_tools::DiscoverableTool;
 use codex_tools::FreeformTool;
@@ -140,6 +146,149 @@ fn extension_tools_do_not_replace_builtin_tools() {
             .filter(|tool| tool.name() == "update_plan")
             .count(),
         1
+    );
+}
+
+#[test]
+fn builtin_context_lock_disables_builtin_apply_patch_without_affecting_mcp_tool() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_builtin_context_lock(Some(lock_with_tool_entry(ToolEntry {
+        id: TOOL_APPLY_PATCH_ID.to_string(),
+        enabled: false,
+        name: None,
+        spec: None,
+    })));
+
+    let (tools, registry) = build_specs(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("mcp__sample__", "apply_patch"),
+            mcp_tool(
+                "apply_patch",
+                "External apply patch remains visible.",
+                serde_json::json!({"type": "object"}),
+            ),
+        )])),
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_lacks_tool_name(&tools, "apply_patch");
+    assert_contains_tool_names(&tools, &["update_plan"]);
+    assert!(!registry.has_handler(&ToolName::plain("apply_patch")));
+    assert!(registry.has_handler(&ToolName::namespaced("mcp__sample__", "apply_patch")));
+    assert_eq!(
+        namespace_function_names(&tools, "mcp__sample__"),
+        vec!["apply_patch".to_string()]
+    );
+
+    let router = ToolRouter::from_config(
+        &tools_config,
+        ToolRouterParams {
+            mcp_tools: None,
+            deferred_mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            discoverable_tools: None,
+            extension_tool_bundles: Vec::new(),
+            dynamic_tools: &[],
+        },
+    );
+    assert_lacks_tool_name(&router.model_visible_specs(), "apply_patch");
+    assert_contains_tool_names(&router.model_visible_specs(), &["update_plan"]);
+}
+
+#[test]
+fn builtin_context_lock_overrides_builtin_tool_description_and_keeps_handler_name() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let mut override_spec = create_apply_patch_freeform_tool(/*include_environment_id*/ false);
+    let ToolSpec::Freeform(tool) = &mut override_spec else {
+        panic!("expected apply_patch freeform tool");
+    };
+    tool.description = "Locked apply patch description.".to_string();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_builtin_context_lock(Some(lock_with_tool_entry(ToolEntry {
+        id: TOOL_APPLY_PATCH_ID.to_string(),
+        enabled: true,
+        name: Some("apply_patch".to_string()),
+        spec: Some(serde_json::to_value(&override_spec).expect("serialize override spec")),
+    })));
+
+    let (tools, registry) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let ToolSpec::Freeform(FreeformTool {
+        name, description, ..
+    }) = find_tool(&tools, "apply_patch")
+    else {
+        panic!("expected apply_patch freeform tool");
+    };
+    assert_eq!(name, "apply_patch");
+    assert_eq!(description, "Locked apply patch description.");
+    assert!(registry.has_handler(&ToolName::plain("apply_patch")));
+}
+
+#[test]
+#[should_panic(
+    expected = "builtin context lock id `builtin.tool.apply_patch` expected tool name `apply_patch` but lock payload names `not_apply_patch`"
+)]
+fn builtin_context_lock_tool_name_mismatch_errors() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let mut override_spec = create_apply_patch_freeform_tool(/*include_environment_id*/ false);
+    let ToolSpec::Freeform(tool) = &mut override_spec else {
+        panic!("expected apply_patch freeform tool");
+    };
+    tool.name = "not_apply_patch".to_string();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_builtin_context_lock(Some(lock_with_tool_entry(ToolEntry {
+        id: TOOL_APPLY_PATCH_ID.to_string(),
+        enabled: true,
+        name: Some("not_apply_patch".to_string()),
+        spec: Some(serde_json::to_value(&override_spec).expect("serialize override spec")),
+    })));
+
+    let _ = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
     );
 }
 
@@ -2536,6 +2685,17 @@ fn model_info() -> ModelInfo {
         "supports_search_tool": false
     }))
     .expect("deserialize test model")
+}
+
+fn lock_with_tool_entry(entry: ToolEntry) -> BuiltinContextLockTools {
+    BuiltinContextLockTools {
+        tools: vec![BuiltinContextLockToolEntry {
+            id: entry.id,
+            enabled: entry.enabled,
+            name: entry.name,
+            spec: entry.spec,
+        }],
+    }
 }
 
 fn search_capable_model_info() -> ModelInfo {

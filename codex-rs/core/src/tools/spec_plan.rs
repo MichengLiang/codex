@@ -44,11 +44,15 @@ use crate::tools::handlers::view_image_spec::ViewImageToolOptions;
 use crate::tools::hosted_spec::WebSearchToolOptions;
 use crate::tools::hosted_spec::create_image_generation_tool;
 use crate::tools::hosted_spec::create_web_search_tool;
+use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolRegistryBuilder;
 use crate::tools::spec_plan_types::ToolRegistryBuildParams;
 use crate::tools::spec_plan_types::agent_type_description;
+use codex_config::builtin_context_lock::TOOL_APPLY_PATCH_ID;
 use codex_mcp::ToolInfo;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_tools::BuiltinContextLockToolEntry;
+use codex_tools::BuiltinContextLockTools;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolEnvironmentMode;
@@ -69,11 +73,81 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+struct BuiltinToolLock<'a> {
+    lock: Option<&'a BuiltinContextLockTools>,
+}
+
+impl<'a> BuiltinToolLock<'a> {
+    fn new(lock: Option<&'a BuiltinContextLockTools>) -> Self {
+        Self { lock }
+    }
+
+    fn register_handler<H>(
+        &self,
+        builder: &mut ToolRegistryBuilder,
+        builtin_id: &str,
+        handler: Arc<H>,
+    ) where
+        H: ToolHandler + 'static,
+    {
+        let Some(entry) = self.tool_entry(builtin_id) else {
+            builder.register_handler(handler);
+            return;
+        };
+
+        let tool_name = handler.tool_name();
+        if !entry.enabled {
+            return;
+        }
+
+        if let Some(spec) = entry.spec.as_ref() {
+            let spec = serde_json::from_value::<ToolSpec>(spec.clone()).unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse builtin context lock spec for id `{builtin_id}` as tool spec: {err}"
+                )
+            });
+            validate_locked_tool_name(builtin_id, &tool_name, entry.name.as_deref(), &spec);
+            builder.register_handler_with_spec_override(handler, spec);
+        } else {
+            if let Some(locked_name) = entry.name.as_deref() {
+                validate_locked_tool_name_text(builtin_id, &tool_name, locked_name);
+            }
+            builder.register_handler(handler);
+        }
+    }
+
+    fn tool_entry(&self, builtin_id: &str) -> Option<&'a BuiltinContextLockToolEntry> {
+        self.lock?.tools.iter().find(|entry| entry.id == builtin_id)
+    }
+}
+
+fn validate_locked_tool_name(
+    builtin_id: &str,
+    handler_name: &ToolName,
+    locked_name: Option<&str>,
+    spec: &ToolSpec,
+) {
+    if let Some(locked_name) = locked_name {
+        validate_locked_tool_name_text(builtin_id, handler_name, locked_name);
+    }
+    validate_locked_tool_name_text(builtin_id, handler_name, spec.name());
+}
+
+fn validate_locked_tool_name_text(builtin_id: &str, handler_name: &ToolName, locked_name: &str) {
+    let expected_name = handler_name.name.as_str();
+    if handler_name.namespace.is_some() || locked_name != expected_name {
+        panic!(
+            "builtin context lock id `{builtin_id}` expected tool name `{expected_name}` but lock payload names `{locked_name}`"
+        );
+    }
+}
+
 pub fn build_tool_registry_builder(
     config: &ToolsConfig,
     params: ToolRegistryBuildParams<'_>,
 ) -> ToolRegistryBuilder {
     let mut builder = ToolRegistryBuilder::new(config.code_mode_enabled);
+    let builtin_lock = BuiltinToolLock::new(config.builtin_context_lock_tools.as_ref());
     let exec_permission_approvals_enabled = config.exec_permission_approvals_enabled;
 
     if config.code_mode_enabled {
@@ -259,7 +333,11 @@ pub fn build_tool_registry_builder(
     if config.environment_mode.has_environment() && config.apply_patch_tool_type.is_some() {
         let include_environment_id =
             matches!(config.environment_mode, ToolEnvironmentMode::Multiple);
-        builder.register_handler(Arc::new(ApplyPatchHandler::new(include_environment_id)));
+        builtin_lock.register_handler(
+            &mut builder,
+            TOOL_APPLY_PATCH_ID,
+            Arc::new(ApplyPatchHandler::new(include_environment_id)),
+        );
     }
 
     if config

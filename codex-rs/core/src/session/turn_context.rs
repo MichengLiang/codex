@@ -231,6 +231,9 @@ impl TurnContext {
                 .enabled(Feature::MultiAgentV2)
                 .then_some(config.multi_agent_v2.min_wait_timeout_ms),
         )
+        .with_builtin_context_lock(crate::tools::spec::builtin_context_lock_tools_config(
+            config.builtin_context_lock.as_ref(),
+        ))
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &config.agent_roles,
         ));
@@ -517,6 +520,9 @@ impl Session {
                 .enabled(Feature::MultiAgentV2)
                 .then_some(per_turn_config.multi_agent_v2.min_wait_timeout_ms),
         )
+        .with_builtin_context_lock(crate::tools::spec::builtin_context_lock_tools_config(
+            per_turn_config.builtin_context_lock.as_ref(),
+        ))
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
         ));
