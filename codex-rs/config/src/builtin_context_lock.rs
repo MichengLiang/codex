@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io;
 
-const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 1;
 
 pub const BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID: &str =
     "builtin.base_instructions.model_catalog.current";
@@ -164,6 +164,15 @@ pub struct TemplateEntry {
     pub content: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneratedBuiltinContextLock {
+    pub schema_version: u32,
+    pub base_instructions: Vec<BaseInstructionsEntry>,
+    pub fragments: Vec<FragmentEntry>,
+    pub tools: Vec<ToolEntry>,
+    pub templates: Vec<TemplateEntry>,
+}
+
 pub enum BaseInstructionsDecision<'a> {
     UseContent(&'a str),
     Disable,
@@ -174,6 +183,44 @@ pub enum FragmentDecision<'a> {
     UseOriginal,
     UseContent(&'a str),
     Disable,
+}
+
+pub fn generate_builtin_context_lock(
+    model_catalog_base_instructions: impl Into<String>,
+) -> GeneratedBuiltinContextLock {
+    GeneratedBuiltinContextLock {
+        schema_version: SCHEMA_VERSION,
+        base_instructions: vec![BaseInstructionsEntry {
+            id: BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID.to_string(),
+            enabled: true,
+            content: Some(model_catalog_base_instructions.into()),
+        }],
+        fragments: KNOWN_FRAGMENT_IDS
+            .iter()
+            .map(|id| FragmentEntry {
+                id: (*id).to_string(),
+                enabled: true,
+                content: None,
+            })
+            .collect(),
+        tools: KNOWN_TOOL_NAMES
+            .iter()
+            .map(|(id, name)| ToolEntry {
+                id: (*id).to_string(),
+                enabled: true,
+                name: Some((*name).to_string()),
+                spec: None,
+            })
+            .collect(),
+        templates: KNOWN_TEMPLATE_IDS
+            .iter()
+            .map(|id| TemplateEntry {
+                id: (*id).to_string(),
+                enabled: true,
+                content: None,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -462,5 +509,56 @@ fn tool_spec_name<'a>(id: &str, spec: &'a serde_json::Value) -> io::Result<&'a s
                 "builtin context lock id `{id}` in `tools` has unsupported tool spec type `{other}`"
             ),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn generated_lock_has_stable_shape_and_default_enabled_entries() {
+        let lock = generate_builtin_context_lock("base");
+
+        assert_eq!(
+            lock,
+            GeneratedBuiltinContextLock {
+                schema_version: SCHEMA_VERSION,
+                base_instructions: vec![BaseInstructionsEntry {
+                    id: BASE_INSTRUCTIONS_MODEL_CATALOG_CURRENT_ID.to_string(),
+                    enabled: true,
+                    content: Some("base".to_string()),
+                }],
+                fragments: KNOWN_FRAGMENT_IDS
+                    .iter()
+                    .map(|id| FragmentEntry {
+                        id: (*id).to_string(),
+                        enabled: true,
+                        content: None,
+                    })
+                    .collect(),
+                tools: KNOWN_TOOL_NAMES
+                    .iter()
+                    .map(|(id, name)| ToolEntry {
+                        id: (*id).to_string(),
+                        enabled: true,
+                        name: Some((*name).to_string()),
+                        spec: None,
+                    })
+                    .collect(),
+                templates: Vec::new(),
+            }
+        );
+
+        let serialized = serde_json::to_string_pretty(&lock).expect("serialize generated lock");
+        let parsed: LockFile = serde_json::from_str(&serialized).expect("parse generated lock");
+        BuiltinContextLock::from_lock_file(
+            AbsolutePathBuf::from_absolute_path("/tmp/builtin-context.lock.json")
+                .expect("absolute path"),
+            parsed,
+            &mut Vec::new(),
+        )
+        .expect("generated lock should parse");
     }
 }

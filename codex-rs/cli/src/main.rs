@@ -44,6 +44,7 @@ use supports_color::Stream;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
+mod builtin_context_lock_cmd;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod marketplace_cmd;
@@ -122,6 +123,10 @@ enum Subcommand {
 
     /// Manage Codex plugins.
     Plugin(PluginCli),
+
+    /// Manage builtin context lock files.
+    #[clap(name = "builtin-context-lock")]
+    BuiltinContextLock(builtin_context_lock_cmd::BuiltinContextLockCli),
 
     /// Start Codex as an MCP server (stdio).
     McpServer,
@@ -883,6 +888,15 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     marketplace_cli.run().await?;
                 }
             }
+        }
+        Some(Subcommand::BuiltinContextLock(builtin_context_lock_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "builtin-context-lock",
+            )?;
+            builtin_context_lock_cmd::run(builtin_context_lock_cli, root_config_overrides.clone())
+                .await?;
         }
         Some(Subcommand::AppServer(app_server_cli)) => {
             let AppServerCommand {
@@ -2418,6 +2432,30 @@ mod tests {
         let cli = MultitoolCli::try_parse_from(["codex", "--remote", "ws://127.0.0.1:4500"])
             .expect("parse");
         assert_eq!(cli.remote.remote.as_deref(), Some("ws://127.0.0.1:4500"));
+    }
+
+    #[test]
+    fn builtin_context_lock_generate_parses_output_path() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "builtin-context-lock",
+            "generate",
+            "--output",
+            "lock.json",
+        ])
+        .expect("parse");
+
+        assert_matches!(
+            cli.subcommand,
+            Some(Subcommand::BuiltinContextLock(
+                builtin_context_lock_cmd::BuiltinContextLockCli {
+                    subcommand: builtin_context_lock_cmd::BuiltinContextLockSubcommand::Generate(
+                        builtin_context_lock_cmd::BuiltinContextLockGenerateCommand { .. }
+                    ),
+                    ..
+                }
+            ))
+        );
     }
 
     #[test]
