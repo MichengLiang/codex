@@ -318,6 +318,18 @@
       },
       "type": "object"
     },
+    "BuiltinContextLockToml": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
     "BundledSkillsConfig": {
       "additionalProperties": false,
       "properties": {
@@ -3947,6 +3959,14 @@
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "builtin_context_lock": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/BuiltinContextLockToml"
+        }
+      ],
+      "description": "Project-level lock file for Codex built-in model-visible context."
     },
     "chatgpt_base_url": {
       "description": "Base URL for requests to ChatGPT (as opposed to the OpenAI API).",

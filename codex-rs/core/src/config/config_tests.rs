@@ -11,6 +11,7 @@ use codex_config::RequirementSource;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
+use codex_config::config_toml::BuiltinContextLockToml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
@@ -6055,6 +6056,195 @@ async fn load_config_rejects_missing_agent_role_config_file() -> std::io::Result
     Ok(())
 }
 
+#[test]
+fn toml_parses_builtin_context_lock_path() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let toml_value = toml::from_str(
+        r#"
+[builtin_context_lock]
+path = ".codex/builtin-context.lock.json"
+"#,
+    )
+    .map_err(std::io::Error::other)?;
+    let cfg = deserialize_config_toml_with_base(toml_value, codex_home.path())?;
+
+    assert_eq!(
+        cfg.builtin_context_lock,
+        Some(BuiltinContextLockToml {
+            path: codex_home
+                .path()
+                .join(".codex")
+                .join("builtin-context.lock.json")
+                .abs(),
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn builtin_context_lock_relative_path_resolves_against_config_toml() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home
+        .path()
+        .join(".codex")
+        .join("builtin-context.lock.json");
+    tokio::fs::create_dir_all(lock_path.parent().expect("lock path should have parent")).await?;
+    tokio::fs::write(
+        &lock_path,
+        r#"{"schema_version":1,"base_instructions":[],"fragments":[],"tools":[],"templates":[]}"#,
+    )
+    .await?;
+    tokio::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[builtin_context_lock]
+path = ".codex/builtin-context.lock.json"
+"#,
+    )
+    .await?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert_eq!(
+        config
+            .builtin_context_lock
+            .as_ref()
+            .map(|lock| lock.path.clone()),
+        Some(lock_path.abs())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_missing_file_fails() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home.path().join("missing.lock.json");
+
+    let err = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            builtin_context_lock: Some(BuiltinContextLockToml {
+                path: lock_path.abs(),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("missing builtin context lock should fail config load");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        err.to_string()
+            .contains("failed to read builtin_context_lock.path")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_malformed_json_fails() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home.path().join("builtin-context.lock.json");
+    tokio::fs::write(&lock_path, "{not json").await?;
+
+    let err = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            builtin_context_lock: Some(BuiltinContextLockToml {
+                path: lock_path.abs(),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("malformed builtin context lock should fail config load");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("failed to parse builtin_context_lock.path")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_unsupported_schema_version_fails() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home.path().join("builtin-context.lock.json");
+    tokio::fs::write(
+        &lock_path,
+        r#"{"schema_version":2,"base_instructions":[],"fragments":[],"tools":[],"templates":[]}"#,
+    )
+    .await?;
+
+    let err = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            builtin_context_lock: Some(BuiltinContextLockToml {
+                path: lock_path.abs(),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("unsupported builtin context lock schema version should fail config load");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("unsupported builtin context lock schema_version 2")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_builtin_context_lock_unknown_id_warns_without_failing() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let lock_path = codex_home.path().join("builtin-context.lock.json");
+    tokio::fs::write(
+        &lock_path,
+        r#"{"schema_version":1,"base_instructions":[{"id":"builtin.base_instructions.future","enabled":true,"content":"future"}],"fragments":[],"tools":[],"templates":[]}"#,
+    )
+    .await?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            builtin_context_lock: Some(BuiltinContextLockToml {
+                path: lock_path.abs(),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config
+            .builtin_context_lock
+            .as_ref()
+            .expect("lock should load")
+            .base_instructions,
+        BTreeMap::new()
+    );
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning.contains(
+                "Ignoring unknown builtin context lock id `builtin.base_instructions.future`"
+            )),
+        "{:?}",
+        config.startup_warnings
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn agent_role_relative_config_file_resolves_against_config_toml() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -7383,6 +7573,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             experimental_thread_config_endpoint: None,
             experimental_thread_store: ThreadStoreConfig::Local,
             base_instructions: None,
+            builtin_context_lock: None,
             developer_instructions: None,
             guardian_policy_config: None,
             include_permissions_instructions: true,
@@ -7829,6 +8020,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         experimental_thread_config_endpoint: None,
         experimental_thread_store: ThreadStoreConfig::Local,
         base_instructions: None,
+        builtin_context_lock: None,
         developer_instructions: None,
         guardian_policy_config: None,
         include_permissions_instructions: true,
@@ -7989,6 +8181,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         experimental_thread_config_endpoint: None,
         experimental_thread_store: ThreadStoreConfig::Local,
         base_instructions: None,
+        builtin_context_lock: None,
         developer_instructions: None,
         guardian_policy_config: None,
         include_permissions_instructions: true,
@@ -8134,6 +8327,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         experimental_thread_config_endpoint: None,
         experimental_thread_store: ThreadStoreConfig::Local,
         base_instructions: None,
+        builtin_context_lock: None,
         developer_instructions: None,
         guardian_policy_config: None,
         include_permissions_instructions: true,

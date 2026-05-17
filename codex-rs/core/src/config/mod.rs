@@ -23,6 +23,8 @@ use codex_config::ResidencyRequirement;
 use codex_config::SandboxModeRequirement;
 use codex_config::Sourced;
 use codex_config::ThreadConfigLoader;
+use codex_config::builtin_context_lock::BuiltinContextLock;
+use codex_config::builtin_context_lock::read_builtin_context_lock_from_path;
 use codex_config::config_toml::ConfigLockfileToml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
@@ -449,6 +451,9 @@ pub struct Config {
 
     /// Base instructions override.
     pub base_instructions: Option<String>,
+
+    /// Parsed project-level lock for Codex built-in model-visible context.
+    pub builtin_context_lock: Option<BuiltinContextLock>,
 
     /// Developer instructions override injected as a separate message.
     pub developer_instructions: Option<String>,
@@ -2605,6 +2610,23 @@ impl Config {
             agent_roles::load_agent_roles(fs, &cfg, &config_layer_stack, &mut startup_warnings)
                 .await?;
 
+        // `builtin_context_lock.path` is an AbsolutePathBuf, so each config
+        // layer has already resolved relative paths against its config.toml
+        // directory before merging. Loading it here makes a configured missing,
+        // unreadable, or malformed lock fail effective config initialization.
+        let builtin_context_lock = if let Some(lock_config) = cfg.builtin_context_lock.as_ref() {
+            Some(
+                read_builtin_context_lock_from_path(
+                    fs,
+                    &lock_config.path,
+                    &mut startup_warnings,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
         let openai_base_url = cfg
             .openai_base_url
             .clone()
@@ -3025,6 +3047,7 @@ impl Config {
             notify: cfg.notify,
             user_instructions,
             base_instructions,
+            builtin_context_lock,
             personality,
             developer_instructions,
             compact_prompt,

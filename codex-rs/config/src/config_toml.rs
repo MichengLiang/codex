@@ -156,6 +156,9 @@ pub struct ConfigToml {
     #[serde(default)]
     pub developer_instructions: Option<String>,
 
+    /// Project-level lock file for Codex built-in model-visible context.
+    pub builtin_context_lock: Option<BuiltinContextLockToml>,
+
     /// Whether to inject the `<permissions instructions>` developer block.
     pub include_permissions_instructions: Option<bool>,
 
@@ -461,6 +464,12 @@ pub struct ConfigLockfileToml {
 
     /// Replayable effective config captured in the lockfile.
     pub config: ConfigToml,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct BuiltinContextLockToml {
+    pub path: AbsolutePathBuf,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
