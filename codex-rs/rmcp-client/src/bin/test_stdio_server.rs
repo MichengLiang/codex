@@ -72,6 +72,7 @@ impl TestToolServer {
             Self::near_miss_freeform_tool(),
             Self::cwd_tool(),
             Self::sync_tool(),
+            Self::sync_readonly_tool(),
             Self::image_tool(),
             Self::image_scenario_tool(),
             sandbox_meta_tool,
@@ -252,6 +253,12 @@ impl TestToolServer {
         }))
         .expect("sync tool output schema should deserialize");
         tool.output_schema = Some(Arc::new(output_schema));
+        tool
+    }
+
+    fn sync_readonly_tool() -> Tool {
+        let mut tool = Self::sync_tool();
+        tool.name = Cow::Borrowed("sync_readonly");
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
         tool
     }
@@ -458,11 +465,8 @@ impl ServerHandler for TestToolServer {
             JsonObject::new(),
         )]));
 
-        ServerInfo {
-            instructions: Some("Use these tools to exercise the rmcp test server.".to_string()),
-            capabilities,
-            ..ServerInfo::default()
-        }
+        ServerInfo::new(capabilities)
+            .with_instructions("Use these tools to exercise the rmcp test server.")
     }
 
     fn list_tools(
@@ -513,14 +517,14 @@ impl ServerHandler for TestToolServer {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         if uri == MEMO_URI {
-            Ok(ReadResourceResult {
-                contents: vec![ResourceContents::TextResourceContents {
+            Ok(ReadResourceResult::new(vec![
+                ResourceContents::TextResourceContents {
                     uri,
                     mime_type: Some("text/plain".to_string()),
                     text: Self::memo_text().to_string(),
                     meta: None,
-                }],
-            })
+                },
+            ]))
         } else {
             Err(McpError::resource_not_found(
                 "resource_not_found",
@@ -535,22 +539,14 @@ impl ServerHandler for TestToolServer {
         context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         match request.name.as_ref() {
-            "sandbox_meta" => Ok(CallToolResult {
-                content: Vec::new(),
-                structured_content: Some(serde_json::Value::Object(context.meta.0)),
-                is_error: Some(false),
-                meta: None,
-            }),
+            "sandbox_meta" => Ok(Self::structured_result(serde_json::Value::Object(
+                context.meta.0,
+            ))),
             "cwd" => {
                 let cwd = std::env::current_dir()
                     .map(|path| path.to_string_lossy().into_owned())
                     .map_err(|err| McpError::internal_error(err.to_string(), None))?;
-                Ok(CallToolResult {
-                    content: Vec::new(),
-                    structured_content: Some(json!({ "cwd": cwd })),
-                    is_error: Some(false),
-                    meta: None,
-                })
+                Ok(Self::structured_result(json!({ "cwd": cwd })))
             }
             "echo" | "echo-tool" => {
                 let args: EchoArgs = match request.arguments {
@@ -573,12 +569,7 @@ impl ServerHandler for TestToolServer {
                     "env": env_snapshot.get(env_name),
                 });
 
-                Ok(CallToolResult {
-                    content: Vec::new(),
-                    structured_content: Some(structured_content),
-                    is_error: Some(false),
-                    meta: None,
-                })
+                Ok(Self::structured_result(structured_content))
             }
             "freeform_echo" => {
                 let args = Self::parse_call_args::<FreeformEchoArgs>(&request, "freeform_echo")?;
@@ -636,6 +627,10 @@ impl ServerHandler for TestToolServer {
             }
             "sync" => {
                 let args = Self::parse_call_args::<SyncArgs>(&request, "sync")?;
+                Self::sync_result(args).await
+            }
+            "sync_readonly" => {
+                let args = Self::parse_call_args::<SyncArgs>(&request, "sync_readonly")?;
                 Self::sync_result(args).await
             }
             other => Err(McpError::invalid_params(
@@ -753,12 +748,13 @@ impl TestToolServer {
             sleep(Duration::from_millis(delay)).await;
         }
 
-        Ok(CallToolResult {
-            content: Vec::new(),
-            structured_content: Some(json!({ "result": "ok" })),
-            is_error: Some(false),
-            meta: None,
-        })
+        Ok(Self::structured_result(json!({ "result": "ok" })))
+    }
+
+    fn structured_result(value: serde_json::Value) -> CallToolResult {
+        let mut result = CallToolResult::success(Vec::new());
+        result.structured_content = Some(value);
+        result
     }
 }
 

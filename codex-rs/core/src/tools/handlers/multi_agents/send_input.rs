@@ -6,22 +6,27 @@ use codex_tools::ToolSpec;
 
 pub(crate) struct Handler;
 
-impl ToolHandler for Handler {
-    type Output = SendInputResult;
-
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for Handler {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain("send_input")
+        ToolName::namespaced(MULTI_AGENT_V1_NAMESPACE, "send_input")
     }
 
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_send_input_tool_v1())
+    fn spec(&self) -> ToolSpec {
+        create_send_input_tool_v1()
     }
 
-    fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Function { .. })
+    fn search_info(&self) -> Option<ToolSearchInfo> {
+        multi_agent_tool_search_info(
+            "send_input send message existing agent subagent follow up interrupt redirect queue target",
+            self.spec(),
+        )
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let ToolInvocation {
             session,
             turn,
@@ -53,7 +58,7 @@ impl ToolHandler for Handler {
                 CollabAgentInteractionBeginEvent {
                     call_id: call_id.clone(),
                     started_at_ms: now_unix_timestamp_ms(),
-                    sender_thread_id: session.conversation_id,
+                    sender_thread_id: session.thread_id,
                     receiver_thread_id,
                     prompt: prompt.clone(),
                 }
@@ -76,7 +81,7 @@ impl ToolHandler for Handler {
                 CollabAgentInteractionEndEvent {
                     call_id,
                     completed_at_ms: now_unix_timestamp_ms(),
-                    sender_thread_id: session.conversation_id,
+                    sender_thread_id: session.thread_id,
                     receiver_thread_id,
                     receiver_agent_nickname: receiver_agent.agent_nickname,
                     receiver_agent_role: receiver_agent.agent_role,
@@ -88,7 +93,13 @@ impl ToolHandler for Handler {
             .await;
         let submission_id = result?;
 
-        Ok(SendInputResult { submission_id })
+        Ok(boxed_tool_output(SendInputResult { submission_id }))
+    }
+}
+
+impl CoreToolRuntime for Handler {
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
     }
 }
 

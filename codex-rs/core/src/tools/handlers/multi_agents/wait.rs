@@ -27,22 +27,27 @@ impl Handler {
     }
 }
 
-impl ToolHandler for Handler {
-    type Output = WaitAgentResult;
-
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for Handler {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain("wait_agent")
+        ToolName::namespaced(MULTI_AGENT_V1_NAMESPACE, "wait_agent")
     }
 
-    fn spec(&self) -> Option<ToolSpec> {
-        Some(create_wait_agent_tool_v1(self.options))
+    fn spec(&self) -> ToolSpec {
+        create_wait_agent_tool_v1(self.options)
     }
 
-    fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Function { .. })
+    fn search_info(&self) -> Option<ToolSearchInfo> {
+        multi_agent_tool_search_info(
+            "wait_agent wait agent subagent status final result complete timeout targets",
+            self.spec(),
+        )
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let ToolInvocation {
             session,
             turn,
@@ -91,7 +96,7 @@ impl ToolHandler for Handler {
                 &turn,
                 CollabWaitingBeginEvent {
                     started_at_ms: now_unix_timestamp_ms(),
-                    sender_thread_id: session.conversation_id,
+                    sender_thread_id: session.thread_id,
                     receiver_thread_ids: receiver_thread_ids.clone(),
                     receiver_agents: receiver_agents.clone(),
                     call_id: call_id.clone(),
@@ -121,7 +126,7 @@ impl ToolHandler for Handler {
                         .send_event(
                             &turn,
                             CollabWaitingEndEvent {
-                                sender_thread_id: session.conversation_id,
+                                sender_thread_id: session.thread_id,
                                 call_id: call_id.clone(),
                                 completed_at_ms: now_unix_timestamp_ms(),
                                 agent_statuses: build_wait_agent_statuses(
@@ -190,7 +195,7 @@ impl ToolHandler for Handler {
             .send_event(
                 &turn,
                 CollabWaitingEndEvent {
-                    sender_thread_id: session.conversation_id,
+                    sender_thread_id: session.thread_id,
                     call_id,
                     completed_at_ms: now_unix_timestamp_ms(),
                     agent_statuses,
@@ -200,7 +205,13 @@ impl ToolHandler for Handler {
             )
             .await;
 
-        Ok(result)
+        Ok(boxed_tool_output(result))
+    }
+}
+
+impl CoreToolRuntime for Handler {
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
     }
 }
 

@@ -2,6 +2,8 @@ use super::*;
 
 // Duration before a browser ChatGPT login attempt is abandoned.
 const LOGIN_CHATGPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// The override is intentionally available only in debug builds, matching the login path below.
+#[cfg(debug_assertions)]
 const LOGIN_ISSUER_OVERRIDE_ENV_VAR: &str = "CODEX_APP_SERVER_LOGIN_ISSUER";
 
 enum ActiveLogin {
@@ -568,11 +570,11 @@ impl AccountRequestProcessor {
             }
         }
 
-        if let Some(expected_workspace) = self.config.forced_chatgpt_workspace_id.as_deref()
-            && chatgpt_account_id != expected_workspace
+        if let Some(expected_workspaces) = self.config.forced_chatgpt_workspace_id.as_deref()
+            && !expected_workspaces.contains(&chatgpt_account_id)
         {
             return Err(invalid_request(format!(
-                "External auth must use workspace {expected_workspace}, but received {chatgpt_account_id:?}."
+                "External auth must use one of workspace(s) {expected_workspaces:?}, but received {chatgpt_account_id:?}.",
             )));
         }
 
@@ -584,7 +586,7 @@ impl AccountRequestProcessor {
         )
         .map_err(|err| internal_error(format!("failed to set external auth: {err}")))?;
         self.auth_manager.reload().await;
-        self.config_manager.replace_cloud_requirements_loader(
+        self.config_manager.replace_cloud_config_bundle_loader(
             self.auth_manager.clone(),
             self.config.chatgpt_base_url.clone(),
         );
@@ -643,7 +645,7 @@ impl AccountRequestProcessor {
             let auth_manager = thread_manager.auth_manager();
             auth_manager.reload().await;
             config_manager
-                .replace_cloud_requirements_loader(auth_manager.clone(), chatgpt_base_url);
+                .replace_cloud_config_bundle_loader(auth_manager.clone(), chatgpt_base_url);
             config_manager
                 .sync_default_client_residency_requirement()
                 .await;
