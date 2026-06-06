@@ -19,7 +19,7 @@ const SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION: &str =
 const MAX_MODEL_OVERRIDES_IN_SPAWN_AGENT_DESCRIPTION: usize = 5;
 const MAX_REASONING_EFFORT_CHARS_IN_SPAWN_AGENT_DESCRIPTION: usize = 64;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SpawnAgentToolOptions {
     pub available_models: Vec<ModelPreset>,
     pub agent_type_description: String,
@@ -27,6 +27,34 @@ pub struct SpawnAgentToolOptions {
     pub include_usage_hint: bool,
     pub usage_hint_text: Option<String>,
     pub max_concurrent_threads_per_session: Option<usize>,
+    pub encrypted_messages: bool,
+}
+
+impl Default for SpawnAgentToolOptions {
+    fn default() -> Self {
+        Self {
+            available_models: Vec::new(),
+            agent_type_description: String::new(),
+            hide_agent_type_model_reasoning: false,
+            include_usage_hint: false,
+            usage_hint_text: None,
+            max_concurrent_threads_per_session: None,
+            encrypted_messages: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AgentMessageToolOptions {
+    pub encrypted_messages: bool,
+}
+
+impl Default for AgentMessageToolOptions {
+    fn default() -> Self {
+        Self {
+            encrypted_messages: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +114,11 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
     let mut properties = spawn_agent_common_properties_v2(&options.agent_type_description);
     if options.hide_agent_type_model_reasoning {
         hide_spawn_agent_metadata_options(&mut properties);
+    }
+    if !options.encrypted_messages
+        && let Some(message) = properties.get_mut("message")
+    {
+        message.encrypted = None;
     }
     properties.insert(
         "task_name".to_string(),
@@ -155,7 +188,13 @@ pub fn create_send_input_tool_v1() -> ToolSpec {
     })
 }
 
-pub fn create_send_message_tool() -> ToolSpec {
+pub fn create_send_message_tool(options: AgentMessageToolOptions) -> ToolSpec {
+    let mut message = JsonSchema::string(Some(
+        "Message text to queue on the target agent.".to_string(),
+    ));
+    if options.encrypted_messages {
+        message = message.with_encrypted();
+    }
     let properties = BTreeMap::from([
         (
             "target".to_string(),
@@ -163,13 +202,7 @@ pub fn create_send_message_tool() -> ToolSpec {
                 "Relative or canonical task name to message (from spawn_agent).".to_string(),
             )),
         ),
-        (
-            "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to queue on the target agent.".to_string(),
-            ))
-            .with_encrypted(),
-        ),
+        ("message".to_string(), message),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
@@ -187,7 +220,13 @@ pub fn create_send_message_tool() -> ToolSpec {
     })
 }
 
-pub fn create_followup_task_tool() -> ToolSpec {
+pub fn create_followup_task_tool(options: AgentMessageToolOptions) -> ToolSpec {
+    let mut message = JsonSchema::string(Some(
+        "Message text to send to the target agent.".to_string(),
+    ));
+    if options.encrypted_messages {
+        message = message.with_encrypted();
+    }
     let properties = BTreeMap::from([
         (
             "target".to_string(),
@@ -196,13 +235,7 @@ pub fn create_followup_task_tool() -> ToolSpec {
                     .to_string(),
             )),
         ),
-        (
-            "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to send to the target agent.".to_string(),
-            ))
-            .with_encrypted(),
-        ),
+        ("message".to_string(), message),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {

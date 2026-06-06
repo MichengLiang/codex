@@ -48,6 +48,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         include_usage_hint: true,
         usage_hint_text: None,
         max_concurrent_threads_per_session: Some(4),
+        encrypted_messages: true,
     });
 
     let ToolSpec::Function(ResponsesApiTool {
@@ -125,6 +126,7 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
         include_usage_hint: true,
         usage_hint_text: None,
         max_concurrent_threads_per_session: None,
+        encrypted_messages: false,
     });
 
     let ToolSpec::Namespace(namespace) = tool else {
@@ -183,6 +185,7 @@ fn spawn_agent_tool_caps_visible_model_summaries() {
         include_usage_hint: true,
         usage_hint_text: None,
         max_concurrent_threads_per_session: Some(4),
+        encrypted_messages: true,
     });
 
     let ToolSpec::Function(ResponsesApiTool { description, .. }) = tool else {
@@ -228,6 +231,7 @@ fn spawn_agent_tool_hides_service_tier_with_spawn_metadata() {
         include_usage_hint: true,
         usage_hint_text: None,
         max_concurrent_threads_per_session: Some(4),
+        encrypted_messages: true,
     });
 
     let ToolSpec::Function(ResponsesApiTool {
@@ -257,7 +261,9 @@ fn send_message_tool_requires_message_and_has_no_output_schema() {
         parameters,
         output_schema,
         ..
-    }) = create_send_message_tool()
+    }) = create_send_message_tool(AgentMessageToolOptions {
+        encrypted_messages: true,
+    })
     else {
         panic!("send_message should be a function tool");
     };
@@ -300,7 +306,9 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
         parameters,
         output_schema,
         ..
-    }) = create_followup_task_tool()
+    }) = create_followup_task_tool(AgentMessageToolOptions {
+        encrypted_messages: true,
+    })
     else {
         panic!("followup_task should be a function tool");
     };
@@ -331,6 +339,58 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
         Some(&vec!["target".to_string(), "message".to_string()])
     );
     assert_eq!(output_schema, None);
+}
+
+#[test]
+fn multi_agent_v2_message_encryption_can_be_disabled_for_compatible_providers() {
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters: spawn_parameters,
+        ..
+    }) = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+        available_models: Vec::new(),
+        agent_type_description: "role help".to_string(),
+        hide_agent_type_model_reasoning: true,
+        include_usage_hint: false,
+        usage_hint_text: None,
+        max_concurrent_threads_per_session: None,
+        encrypted_messages: false,
+    })
+    else {
+        panic!("spawn_agent should be a function tool");
+    };
+
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters: send_parameters,
+        ..
+    }) = create_send_message_tool(AgentMessageToolOptions {
+        encrypted_messages: false,
+    })
+    else {
+        panic!("send_message should be a function tool");
+    };
+
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters: followup_parameters,
+        ..
+    }) = create_followup_task_tool(AgentMessageToolOptions {
+        encrypted_messages: false,
+    })
+    else {
+        panic!("followup_task should be a function tool");
+    };
+
+    for parameters in [spawn_parameters, send_parameters, followup_parameters] {
+        let properties = parameters
+            .properties
+            .as_ref()
+            .expect("message tool should use object params");
+        assert_eq!(
+            properties
+                .get("message")
+                .and_then(|schema| schema.encrypted),
+            None
+        );
+    }
 }
 
 #[test]
